@@ -6,6 +6,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Roboto+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
+/* ===== STYLE SAMA PERSIS SEPERTI SEBELUMNYA ===== */
 body {
     margin: 0;
     background: #111827;
@@ -192,10 +193,6 @@ button:disabled { background: #374151; cursor: not-allowed; box-shadow: none; tr
     <div class="card">
         <h3>Input Lua Code</h3>
         <textarea id="input" placeholder="Paste your Lua code here. Example: print('Hello, World!');"></textarea>
-        <div class="checkbox-container">Enable VM (Aktifkan perlindungan VM)
-            <input type="checkbox" id="useVM">
-            <span class="checkmark"></span>
-        </div>
         <div class="checkbox-container">Enable Anti-Tamper (Adds a checksum verification)
             <input type="checkbox" id="useAT">
             <span class="checkmark"></span>
@@ -276,7 +273,6 @@ async function obf(){
     const outputEl = document.getElementById("output");
     const btn      = document.getElementById("obfuscateBtn");
     const layersEl = document.getElementById("layers");
-    const useVM    = document.getElementById("useVM").checked;
     const useAT    = document.getElementById("useAT").checked;
     const useRep   = document.getElementById("useRepetition").checked;
 
@@ -345,15 +341,6 @@ end\n`;
 
         // ── Layer 1: data + decoder ──
         let block = `-- Obfuscated by SOLI Obfuscator\n\n`;
-
-        if(useVM){
-            block += `local function vm_run(c)\n`;
-            block += `  local fn, err = load(c)\n`;
-            block += `  if not fn then error(err) end\n`;
-            block += `  return fn()\n`;
-            block += `end\n\n`;
-        }
-
         block += `local ${vData} = "${encoded}"\n`;
         block += `local ${vKey} = ${key}\n\n`;
         block += bxorDef;
@@ -378,13 +365,8 @@ end\n`;
         // ── Layer 3: eksekusi ──
         const vCode = rand(7);
         block += `local ${vCode} = ${vDec}(${vData})\n`;
-
-        if(useVM){
-            block += `vm_run(${vCode})\n\n`;
-        } else {
-            block += `local fn, _err = (loadstring or load)(${vCode})\n`;
-            block += `if fn then fn() else error("SOLI: failed to load code: " .. tostring(_err)) end\n\n`;
-        }
+        block += `local fn, _err = (loadstring or load)(${vCode})\n`;
+        block += `if fn then fn() else error("SOLI: failed to load code: " .. tostring(_err)) end\n\n`;
 
         // ── Repetition ──
         let finalOutput = "";
@@ -461,4 +443,3 @@ document.addEventListener('DOMContentLoaded', ()=>{
 </script>
 </body>
 </html>
-
