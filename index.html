@@ -439,6 +439,7 @@ async function obf() {
 
         // Decoder function — pakai bit.bxor (Lua 5.1 compat)
         block += "local bit = bit or bit32\n";
+        block += "local loadstring = loadstring or load\n";
         block += "local function " + vDec + "(data)\n";
         block += "  local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'\n";
         block += "  data = data:gsub('[^' .. b .. '=]', '')\n";
@@ -501,7 +502,7 @@ async function obf() {
             var vCode = rand(7);
             var vFunc = rand(7);
             block += "local " + vCode + " = " + vDec + "(" + vData + ")\n";
-            block += "local " + vFunc + ", _err = (loadstring or load)(" + vCode + ")\n";
+            block += "local " + vFunc + ", _err = (loadstring or load or function(c) return loadstring(c) end)(" + vCode + ")\n";
             block += "if " + vFunc + " then " + vFunc + "() else error(\"SOLI: \" .. tostring(_err)) end\n\n";
         }
 
@@ -579,4 +580,5 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 </body>
 </html>
+
 
