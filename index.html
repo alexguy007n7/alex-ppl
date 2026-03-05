@@ -438,6 +438,7 @@ async function obf() {
         block += "local " + vKey  + " = " + key + "\n\n";
 
         // Decoder function — pakai bit.bxor (Lua 5.1 compat)
+        block += "local bit = bit or bit32\n";
         block += "local function " + vDec + "(data)\n";
         block += "  local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'\n";
         block += "  data = data:gsub('[^' .. b .. '=]', '')\n";
@@ -456,7 +457,7 @@ async function obf() {
         block += "  end))\n";
         block += "  local out = ''\n";
         block += "  for i = 1, #decoded do\n";
-        block += "    out = out .. string.char(bit.bxor(string.byte(decoded, i), " + vKey + "))\n";
+        block += "    out = out .. string.char((bit32 or bit).bxor(string.byte(decoded, i), " + vKey + "))\n";
         block += "  end\n";
         block += "  return out\n";
         block += "end\n\n";
@@ -578,3 +579,4 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 </body>
 </html>
+
