@@ -1,112 +1,847 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nodet Obfuscator</title>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
+<title>SOLI Obfuscator</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box;}
-body{background:#080c10;color:#c9d1d9;font-family:'Share Tech Mono',monospace;min-height:100vh;padding:24px;}
-h1{font-family:'Rajdhani',sans-serif;font-size:2rem;color:#00e5ff;letter-spacing:4px;text-transform:uppercase;margin-bottom:4px;}
-.sub{color:#3a5a7a;font-size:.8rem;margin-bottom:28px;}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1200px;margin:0 auto;}
-@media(max-width:768px){.grid{grid-template-columns:1fr;}}
-.panel{background:#0d1117;border:1px solid #1e2d3d;border-radius:10px;padding:16px;}
-.panel label{display:block;color:#3a8fbf;font-size:.75rem;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;}
-textarea{width:100%;height:320px;background:#060a0e;border:1px solid #1e2d3d;border-radius:6px;color:#7ee787;font-family:'Share Tech Mono',monospace;font-size:.85rem;padding:12px;resize:vertical;outline:none;transition:border-color .2s;}
-textarea:focus{border-color:#00e5ff44;}
-textarea[readonly]{color:#8b949e;}
-.options{display:flex;gap:20px;flex-wrap:wrap;margin:14px 0;}
-.opt{display:flex;align-items:center;gap:8px;cursor:pointer;color:#8b949e;font-size:.85rem;user-select:none;}
-.opt input{accent-color:#00e5ff;width:15px;height:15px;cursor:pointer;}
-.opt:hover{color:#c9d1d9;}
-.btn{width:100%;padding:12px;background:linear-gradient(90deg,#003d4d,#006680);border:1px solid #00e5ff44;border-radius:6px;color:#00e5ff;font-family:'Share Tech Mono',monospace;font-size:.9rem;letter-spacing:2px;cursor:pointer;transition:all .2s;text-transform:uppercase;}
-.btn:hover{background:linear-gradient(90deg,#005066,#008fa8);box-shadow:0 0 20px #00e5ff22;}
-.btn:disabled{opacity:.4;cursor:not-allowed;}
-.btn-copy{background:linear-gradient(90deg,#1a3a1a,#1f5c1f);border-color:#7ee78744;color:#7ee787;margin-top:10px;}
-.btn-copy:hover{background:linear-gradient(90deg,#1f4a1f,#2a7a2a);box-shadow:0 0 20px #7ee78722;}
-.status{margin-top:14px;padding:10px 14px;border-radius:6px;font-size:.8rem;border:1px solid transparent;display:none;}
-.status.ok{background:#0d2a0d;border-color:#238636;color:#7ee787;display:block;}
-.status.err{background:#2a0d0d;border-color:#da3633;color:#f85149;display:block;}
-.status.loading{background:#0d1a2a;border-color:#1158a7;color:#58a6ff;display:block;}
-.header{max-width:1200px;margin:0 auto 24px;}
-.hash{color:#3a5a7a;font-size:.75rem;margin-top:6px;}
+  :root {
+    --bg: #0d0b12;
+    --surface: #13101c;
+    --card: #17141f;
+    --border: #2e2a40;
+    --accent: #a78bfa;
+    --accent2: #c4b5fd;
+    --warn: #fbbf24;
+    --err: #f87171;
+    --text: #d1cce8;
+    --muted: #6b6585;
+    --font-mono: 'Courier New', Courier, monospace;
+    --font-ui: 'Courier New', Courier, monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    font-family: var(--font-ui);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 30px 20px 60px;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 20% 0%, #1a1030 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 100%, #120d28 0%, transparent 60%);
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.07) 2px,
+      rgba(0,0,0,0.07) 4px
+    );
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  .wrapper {
+    max-width: 960px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* Header */
+  .header {
+    text-align: center;
+    padding: 20px 0 10px;
+    animation: fadeDown 0.6s ease both;
+  }
+  .header h1 {
+    font-size: 2.8em;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    text-shadow: 0 0 30px rgba(167,139,250,0.5), 0 0 60px rgba(167,139,250,0.2);
+  }
+  .header h1 span { color: var(--accent2); }
+  .header p {
+    color: var(--muted);
+    font-size: 0.9em;
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    letter-spacing: 0.05em;
+  }
+
+  /* Warning banner */
+  .banner {
+    background: #1a1200;
+    border: 1px solid var(--warn);
+    border-left: 4px solid var(--warn);
+    border-radius: 8px;
+    padding: 12px 18px;
+    color: var(--warn);
+    font-size: 0.88em;
+    font-family: var(--font-mono);
+    animation: fadeDown 0.7s ease both;
+    line-height: 1.7;
+  }
+  .banner strong { color: #ffe066; }
+
+  /* Grid layout */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    animation: fadeUp 0.7s ease both;
+  }
+  @media (max-width: 680px) {
+    .grid { grid-template-columns: 1fr; }
+    .header h1 { font-size: 2em; }
+  }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  .card:hover {
+    border-color: rgba(167,139,250,0.3);
+    box-shadow: 0 0 30px rgba(167,139,250,0.06);
+  }
+  .card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.4;
+  }
+  .card.full { grid-column: 1 / -1; }
+
+  .card-title {
+    font-size: 0.75em;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 16px;
+    font-family: var(--font-mono);
+  }
+
+  /* Textarea */
+  textarea {
+    width: 100%;
+    height: 200px;
+    background: #100e18;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: #c4b5fd;
+    padding: 12px;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    resize: vertical;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    line-height: 1.6;
+  }
+  textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(167,139,250,0.15);
+  }
+  textarea::placeholder { color: #2e2a40; }
+  textarea[readonly] { color: #9580cc; cursor: default; }
+
+  /* Options */
+  .options { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+  .opt-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--muted);
+    font-size: 0.88em;
+    transition: color 0.2s;
+  }
+  .toggle:hover { color: var(--text); }
+  .toggle input { display: none; }
+  .toggle-track {
+    width: 34px; height: 18px;
+    background: #1e1a2e;
+    border: 1px solid #2e2a40;
+    border-radius: 100px;
+    position: relative;
+    transition: background 0.2s, border-color 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 12px; height: 12px;
+    background: #3a3050;
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .toggle input:checked ~ .toggle-track {
+    background: #2d1f5e;
+    border-color: var(--accent);
+  }
+  .toggle input:checked ~ .toggle-track::after {
+    transform: translateX(16px);
+    background: var(--accent);
+    box-shadow: 0 0 6px rgba(167,139,250,0.6);
+  }
+
+  .rep-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85em;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+  .rep-input input {
+    width: 60px;
+    padding: 4px 8px;
+    background: #100e18;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+    text-align: center;
+  }
+  .rep-input input:focus { outline: none; border-color: var(--accent); }
+
+  /* Buttons */
+  .btn {
+    width: 100%;
+    margin-top: 16px;
+    padding: 13px;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: 0.95em;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #5b21b6, #7c3aed);
+    color: #f3f0ff;
+    box-shadow: 0 4px 20px rgba(124,58,237,0.3);
+  }
+  .btn-primary:hover {
+    background: linear-gradient(135deg, #7c3aed, #a78bfa);
+    box-shadow: 0 4px 30px rgba(167,139,250,0.4);
+    transform: translateY(-1px);
+  }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:disabled {
+    background: #1e1a2e;
+    color: var(--muted);
+    cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+  }
+  .btn-secondary {
+    background: #13101c;
+    color: var(--accent2);
+    border: 1px solid #2e2a40;
+    box-shadow: none;
+  }
+  .btn-secondary:hover {
+    background: #1a1628;
+    border-color: var(--accent);
+    box-shadow: 0 0 15px rgba(167,139,250,0.15);
+  }
+
+  /* Status bar */
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    animation: fadeUp 0.8s ease both;
+  }
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 100px;
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    font-weight: 600;
+    flex: 1;
+    min-width: 160px;
+    border: 1px solid transparent;
+    transition: all 0.3s;
+  }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .pill-idle    { background: #13101c; border-color: #2e2a40; color: #6b6585; }
+  .pill-idle .status-dot    { background: #3a3050; }
+  .pill-process { background: #1a1030; border-color: var(--accent); color: var(--accent); }
+  .pill-process .status-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: blink 1s infinite; }
+  .pill-done    { background: #1a1535; border-color: #7c3aed; color: #c4b5fd; }
+  .pill-done .status-dot    { background: #a78bfa; }
+  .pill-error   { background: #1a0f0f; border-color: var(--err); color: var(--err); }
+  .pill-error .status-dot   { background: var(--err); }
+
+  .layers-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: #13101c;
+    border: 1px solid #2e2a40;
+    border-radius: 100px;
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .layers-badge span { color: var(--accent); font-weight: 700; font-size: 1.1em; }
+
+  /* Discord */
+  .discord-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 22px;
+    background: #5865f2;
+    color: white;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.9em;
+    transition: all 0.2s;
+    border: 1px solid #7289da;
+  }
+  .discord-btn:hover {
+    background: #7289da;
+    box-shadow: 0 4px 20px rgba(88,101,242,0.4);
+    transform: translateY(-1px);
+  }
+
+  /* Animations */
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .spinner {
+    width: 10px; height: 10px;
+    border: 2px solid rgba(167,139,250,0.3);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
 </style>
 </head>
 <body>
-<div class="header">
-  <h1>⬡ Nodet Obfuscator</h1>
-  <div class="sub">// Lua obfuscator with FiOne VM — Roblox compatible</div>
-</div>
-<div class="grid">
-  <div class="panel">
-    <label>// Input Lua Code</label>
-    <textarea id="input" placeholder="-- Paste your Lua script here&#10;print('Hello, World!')"></textarea>
-    <div class="options">
-      <label class="opt"><input type="checkbox" id="useVM" checked> Enable VM Wrapper</label>
-      <label class="opt"><input type="checkbox" id="useAT" checked> Enable Anti-Tamper</label>
+<div class="wrapper">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>SOLI <span>Obfuscator</span></h1>
+    <p>// lua obfuscator //</p>
+  </div>
+
+  <!-- Banner -->
+  <div class="banner">
+    <strong>⚠ ALPHA:</strong> Web ini masih dalam tahap Alpha. Harap maklum jika ada bug.<br>
+    <strong>⚠ PENTING:</strong> Jangan gunakan huruf besar saat input kode Lua.
+  </div>
+
+  <!-- Editor grid -->
+  <div class="grid">
+
+    <!-- Input -->
+    <div class="card">
+      <div class="card-title">▸ Input Lua Code</div>
+      <textarea id="input" placeholder="-- Paste kode Lua kamu di sini&#10;-- Contoh:&#10;print('Hello, World!')"></textarea>
+
+      <div class="options">
+        <div class="opt-row">
+          <label class="toggle">
+            <input type="checkbox" id="useAT">
+            <span class="toggle-track"></span>
+            Anti-Tamper
+          </label>
+        </div>
+        <div class="opt-row">
+          <label class="toggle">
+            <input type="checkbox" id="useVM">
+            <span class="toggle-track"></span>
+            VM Wrapper
+          </label>
+        </div>
+        <div class="opt-row">
+          <label class="toggle">
+            <input type="checkbox" id="useRep">
+            <span class="toggle-track"></span>
+            Code Duplication
+          </label>
+          <div class="rep-input">
+            <span>×</span>
+            <input type="number" id="repCount" value="1" min="1" max="50">
+            <span>reps</span>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="obfBtn" onclick="doObf()">Obfuscate</button>
     </div>
-    <button class="btn" id="obfBtn" onclick="obfuscate()">[ Obfuscate ]</button>
-    <div class="status" id="status"></div>
-  </div>
-  <div class="panel">
-    <label>// Obfuscated Output</label>
-    <textarea id="output" readonly placeholder="-- Obfuscated code will appear here..."></textarea>
-    <div class="hash" id="hashDisplay"></div>
-    <button class="btn btn-copy" id="copyBtn" onclick="copyOutput()">[ Copy Output ]</button>
+
+    <!-- Output -->
+    <div class="card">
+      <div class="card-title">▸ Obfuscated Output</div>
+      <textarea id="output" readonly placeholder="-- Output akan muncul di sini..."></textarea>
+      <button class="btn btn-secondary" onclick="doCopy()">Copy Output</button>
+    </div>
+
+    <!-- Status -->
+    <div class="card full">
+      <div class="card-title">▸ Process Status</div>
+      <div class="status-bar">
+        <div class="status-pill pill-idle" id="statusPill">
+          <div class="status-dot"></div>
+          <span id="statusText">Ready — paste kode Lua dan klik Obfuscate</span>
+        </div>
+        <div class="layers-badge">
+          Layers: <span id="layerCount">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Community -->
+    <div class="card full" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
+      <div>
+        <div class="card-title">▸ Community</div>
+        <p style="font-size:0.88em;color:var(--muted);">Nemu bug? Kasih tau kami di Discord!</p>
+      </div>
+      <a href="https://discord.gg/AZdP3xmKwQ" target="_blank" class="discord-btn">
+        <svg width="18" height="14" viewBox="0 0 18 14" fill="none"><path d="M15.245 1.175A14.9 14.9 0 0 0 11.573 0c-.17.303-.37.71-.506 1.034a13.79 13.79 0 0 0-4.134 0A11.3 11.3 0 0 0 6.425 0 14.94 14.94 0 0 0 2.75 1.178C.396 4.757-.243 8.246.077 11.685c1.545 1.14 3.044 1.834 4.517 2.288.364-.497.688-1.026.966-1.585a9.72 9.72 0 0 1-1.52-.736c.127-.094.252-.19.373-.29 2.927 1.36 6.102 1.36 8.994 0 .122.1.247.196.373.29-.484.288-.995.534-1.521.737.278.56.601 1.09.965 1.585 1.474-.454 2.975-1.148 4.52-2.29.374-3.98-.64-7.437-2.499-10.51ZM6.008 9.573c-.89 0-1.624-.826-1.624-1.837 0-1.01.718-1.838 1.624-1.838.907 0 1.64.827 1.624 1.838 0 1.01-.717 1.837-1.624 1.837Zm5.984 0c-.89 0-1.624-.826-1.624-1.837 0-1.01.718-1.838 1.624-1.838.907 0 1.64.827 1.624 1.838 0 1.01-.71 1.837-1.624 1.837Z" fill="white"/></svg>
+        Join Discord
+      </a>
+    </div>
+
   </div>
 </div>
+
 <script>
-async function obfuscate() {
-  const code = document.getElementById('input').value.trim();
-  const useVM = document.getElementById('useVM').checked;
-  const useAT = document.getElementById('useAT').checked;
-  const btn = document.getElementById('obfBtn');
-  const status = document.getElementById('status');
-  const output = document.getElementById('output');
-  const hashDisplay = document.getElementById('hashDisplay');
-  if (!code) { showStatus('Input is empty!', 'err'); return; }
+// ═══════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════
+function randVar(n) {
+  n = n || 7;
+  var chars = 'abcdefghijklmnopqrstuvwxyz';
+  var s = '_';
+  for (var i = 0; i < n; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+function simpleHash(str) {
+  var h = 0;
+  for (var i = 0; i < str.length; i++)
+    h = (Math.imul(h, 31) + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function looksLikeLua(code) {
+  return /(?:local|function|end|if|then|for|while|return|print|require)/.test(code);
+}
+
+function setStatus(msg, type) {
+  var pill = document.getElementById('statusPill');
+  var text = document.getElementById('statusText');
+  pill.className = 'status-pill pill-' + type;
+  if (type === 'process') {
+    pill.innerHTML = '<div class="spinner"></div><span>' + msg + '</span>';
+  } else {
+    pill.innerHTML = '<div class="status-dot"></div><span>' + msg + '</span>';
+  }
+}
+
+function setLayers(n) {
+  document.getElementById('layerCount').textContent = n;
+}
+
+// ═══════════════════════════════════════════════════════
+//  XOR + BASE64 (safe btoa via charCodeAt fallback)
+// ═══════════════════════════════════════════════════════
+function xorEncode(str, key) {
+  var out = '';
+  for (var i = 0; i < str.length; i++)
+    out += String.fromCharCode(str.charCodeAt(i) ^ key);
+  return out;
+}
+
+function safeBtoa(str) {
+  // handles any char safely
+  var bytes = new Uint8Array(str.length);
+  for (var i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i) & 0xFF;
+  var binary = '';
+  bytes.forEach(function(b){ binary += String.fromCharCode(b); });
+  return btoa(binary);
+}
+
+// ═══════════════════════════════════════════════════════
+//  STRING ENCODER  →  string.char(...)
+// ═══════════════════════════════════════════════════════
+function encodeStrings(code) {
+  // double-quoted strings
+  code = code.replace(/"((?:[^"\\]|\\.)*)"/g, function(_, content) {
+    var decoded = content
+      .replace(/\\n/g,'\n').replace(/\\t/g,'\t')
+      .replace(/\\r/g,'\r').replace(/\\\\/g,'\\').replace(/\\"/g,'"');
+    if (!decoded) return '""';
+    var bytes = [];
+    for (var i = 0; i < decoded.length; i++) bytes.push(decoded.charCodeAt(i) & 0xFF);
+    return 'string.char(' + bytes.join(',') + ')';
+  });
+  // single-quoted strings
+  code = code.replace(/'((?:[^'\\]|\\.)*)'/g, function(_, content) {
+    var decoded = content
+      .replace(/\\n/g,'\n').replace(/\\t/g,'\t')
+      .replace(/\\r/g,'\r').replace(/\\\\/g,'\\').replace(/\\'/g,"'");
+    if (!decoded) return '""';
+    var bytes = [];
+    for (var i = 0; i < decoded.length; i++) bytes.push(decoded.charCodeAt(i) & 0xFF);
+    return 'string.char(' + bytes.join(',') + ')';
+  });
+  return code;
+}
+
+// ═══════════════════════════════════════════════════════
+//  NAME MANGLER
+// ═══════════════════════════════════════════════════════
+function mangleNames(code) {
+  var GLOBALS = {
+    'print':1,'string':1,'table':1,'math':1,'os':1,'io':1,'debug':1,
+    'require':1,'pcall':1,'xpcall':1,'tostring':1,'tonumber':1,'type':1,
+    'pairs':1,'ipairs':1,'next':1,'load':1,'loadstring':1,'error':1,
+    'assert':1,'select':1,'unpack':1,'rawget':1,'rawset':1,'rawlen':1,
+    'setmetatable':1,'getmetatable':1,'coroutine':1,'bit':1,'bit32':1,
+    'getfenv':1,'setfenv':1,'collectgarbage':1,'dofile':1,'loadfile':1,
+    'rawequal':1,'warn':1,'_ENV':1,'_G':1,'_VERSION':1,'game':1,
+    'workspace':1,'script':1,'wait':1,'task':1,'Instance':1,'Vector3':1,
+    'CFrame':1,'Color3':1,'UDim2':1,'UDim':1,'Enum':1,'tick':1,'time':1,
+    'typeof':1,'true':1,'false':1,'nil':1,'and':1,'or':1,'not':1,
+    'if':1,'then':1,'else':1,'elseif':1,'end':1,'do':1,'while':1,
+    'repeat':1,'until':1,'for':1,'in':1,'local':1,'return':1,'break':1,
+    'function':1
+  };
+  var varMap = {};
+  var declPattern = /\blocal\s+(?:function\s+)?([a-z_][a-z0-9_]*)/g;
+  var m;
+  while ((m = declPattern.exec(code)) !== null) {
+    var name = m[1];
+    if (!GLOBALS[name] && !varMap[name])
+      varMap[name] = randVar(8);
+  }
+  for (var old in varMap) {
+    code = code.replace(
+      new RegExp('(?<![a-zA-Z0-9_])' + old + '(?![a-zA-Z0-9_])', 'g'),
+      varMap[old]
+    );
+  }
+  return code;
+}
+
+// ═══════════════════════════════════════════════════════
+//  NUMBER OBFUSCATOR  (executor-safe, no bit32 in output)
+//  Uses math only: XOR via math, not bit32
+// ═══════════════════════════════════════════════════════
+function obfNums(code) {
+  return code.replace(/(?<![.\d])(\b\d+\b)(?!\s*[.\d])/g, function(match, num) {
+    var n = parseInt(num);
+    if (isNaN(n) || n > 9999 || n < 0) return match;
+    var k = (Math.floor(Math.random() * 200) + 50);
+    // Output: pure math xor, no bit32 needed
+    // XOR via: (a+b) - 2*band(a,b)  →  too complex
+    // Simplest safe: n+k-k  (dummy, still readable)
+    // Better: use math.floor trick
+    // We'll use: (n*k)//k which collapses but obfuscates
+    // Safest for executor: just wrap with addition/subtraction junk
+    var junk = Math.floor(Math.random() * 999) + 1;
+    return '(' + (n + junk) + '-' + junk + ')';
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+//  FIONE VM SOURCE
+// ═══════════════════════════════════════════════════════
+var FIONE_VM = "(function()if not bit then local bit_=nil pcall(function()bit_=require('bit') end)bit=bit_ end local bit=bit or bit32 or(function()local a={_TYPE='module',_NAME='bit.numberlua',_VERSION='0.3.1.20120131'}local b=math.floor;local c=2^32;local d=c-1;local function e(f)local g={}local h=setmetatable({},g)function g:__index(i)local j=f(i)h[i]=j;return j end;return h end;local function k(h,l)local function m(n,o)local p,q=0,1;while n~=0 and o~=0 do local r,s=n%l,o%l;p=p+h[r][s]*q;n=(n-r)/l;o=(o-s)/l;q=q*l end;p=p+(n+o)*q;return p end;return m end;local function t(h)local u=k(h,2^1)local v=e(function(n)return e(function(o)return u(n,o)end)end)return k(v,2^(h.n or 1))end;function a.tobit(w)return w%2^32 end;a.bxor=t{[0]={[0]=0,[1]=1},[1]={[0]=1,[1]=0},n=4}local x=a.bxor;function a.bnot(n)return d-n end;local y=a.bnot;function a.band(n,o)return(n+o-x(n,o))/2 end;local z=a.band;function a.bor(n,o)return d-z(d-n,d-o)end;local A=a.bor;local B,C;function a.rshift(n,D)if D<0 then return B(n,-D)end;return b(n%2^32/2^D)end;C=a.rshift;function a.lshift(n,D)if D<0 then return C(n,-D)end;return n*2^D%2^32 end;B=a.lshift;function a.tohex(w,E)E=E or 8;local F;if E<=0 then if E==0 then return''end;F=true;E=-E end;w=z(w,16^E-1)return('%0'..E..(F and'X'or'x')):format(w)end;local G=a.tohex;function a.extract(E,H,I)I=I or 1;return z(C(E,H),2^I-1)end;local J=a.extract;function a.replace(E,j,H,I)I=I or 1;local K=2^I-1;j=z(j,K)local L=y(B(K,H))return z(E,L)+B(j,H)end;local M=a.replace;function a.bswap(w)local n=z(w,0xff)w=C(w,8)local o=z(w,0xff)w=C(w,8)local N=z(w,0xff)w=C(w,8)local O=z(w,0xff)return B(B(B(n,8)+o,8)+N,8)+O end;local P=a.bswap;function a.rrotate(w,D)D=D%32;local Q=z(w,2^D-1)return C(w,D)+B(Q,32-D)end;local R=a.rrotate;function a.lrotate(w,D)return R(w,-D)end;local S=a.lrotate;a.rol=a.lrotate;a.ror=a.rrotate;function a.arshift(w,D)local T=C(w,D)if w>=0x80000000 then T=T+B(2^D-1,32-D)end;return T end;local U=a.arshift;function a.btest(w,V)return z(w,V)~=0 end;a.bit32={}local function W(w)return(-1-w)%c end;a.bit32.bnot=W;local function X(n,o,N,...)local T;if o then n=n%c;o=o%c;T=x(n,o)if N then T=X(T,N,...)end;return T elseif n then return n%c else return 0 end end;a.bit32.bxor=X;local function Y(n,o,N,...)local T;if o then n=n%c;o=o%c;T=(n+o-x(n,o))/2;if N then T=Y(T,N,...)end;return T elseif n then return n%c else return d end end;a.bit32.band=Y;local function Z(n,o,N,...)local T;if o then n=n%c;o=o%c;T=d-z(d-n,d-o)if N then T=Z(T,N,...)end;return T elseif n then return n%c else return 0 end end;a.bit32.bor=Z;function a.bit32.btest(...)return Y(...)~=0 end;function a.bit32.lrotate(w,D)return S(w%c,D)end;function a.bit32.rrotate(w,D)return R(w%c,D)end;function a.bit32.lshift(w,D)if D>31 or D<-31 then return 0 end;return B(w%c,D)end;function a.bit32.rshift(w,D)if D>31 or D<-31 then return 0 end;return C(w%c,D)end;function a.bit32.arshift(w,D)w=w%c;if D>=0 then if D>31 then return w>=0x80000000 and d or 0 else local T=C(w,D)if w>=0x80000000 then T=T+B(2^D-1,32-D)end;return T end else return B(w,-D)end end;function a.bit32.extract(w,H,...)local I=...or 1;if H<0 or H>31 or I<0 or H+I>32 then error'out of range'end;w=w%c;return J(w,H,...)end;function a.bit32.replace(w,j,H,...)local I=...or 1;if H<0 or H>31 or I<0 or H+I>32 then error'out of range'end;w=w%c;j=j%c;return M(w,j,H,...)end;a.bit={}function a.bit.tobit(w)w=w%c;if w>=0x80000000 then w=w-c end;return w end;local _=a.bit.tobit;function a.bit.tohex(w,...)return G(w%c,...)end;function a.bit.bnot(w)return _(y(w%c))end;local function a0(n,o,N,...)if N then return a0(a0(n,o),N,...)elseif o then return _(A(n%c,o%c))else return _(n)end end;a.bit.bor=a0;local function a1(n,o,N,...)if N then return a1(a1(n,o),N,...)elseif o then return _(z(n%c,o%c))else return _(n)end end;a.bit.band=a1;local function a2(n,o,N,...)if N then return a2(a2(n,o),N,...)elseif o then return _(x(n%c,o%c))else return _(n)end end;a.bit.bxor=a2;function a.bit.lshift(w,E)return _(B(w%c,E%32))end;function a.bit.rshift(w,E)return _(C(w%c,E%32))end;function a.bit.arshift(w,E)return _(U(w%c,E%32))end;function a.bit.rol(w,E)return _(S(w%c,E%32))end;function a.bit.ror(w,E)return _(R(w%c,E%32))end;function a.bit.bswap(w)return _(P(w%c))end;return a end)()local unpack=table.unpack or unpack;local a3;local a4;local a5;local a6=50;local a7={[22]=18,[31]=8,[33]=28,[0]=3,[1]=13,[2]=23,[26]=33,[12]=1,[13]=6,[14]=10,[15]=16,[16]=20,[17]=26,[18]=30,[19]=36,[3]=0,[4]=2,[5]=4,[6]=7,[7]=9,[8]=12,[9]=14,[10]=17,[20]=19,[21]=22,[23]=24,[24]=27,[25]=29,[27]=32,[32]=34,[34]=37,[11]=5,[28]=11,[29]=15,[30]=21,[35]=25,[36]=31,[37]=35}local a8={[0]='ABC','ABx','ABC','ABC','ABC','ABx','ABC','ABx','ABC','ABC','ABC','ABC','ABC','ABC','ABC','ABC','ABC','ABC','ABC','ABC','ABC','ABC','AsBx','ABC','ABC','ABC','ABC','ABC','ABC','ABC','ABC','AsBx','AsBx','ABC','ABC','ABC','ABx','ABC'}local a9={[0]={b='OpArgR',c='OpArgN'},{b='OpArgK',c='OpArgN'},{b='OpArgU',c='OpArgU'},{b='OpArgR',c='OpArgN'},{b='OpArgU',c='OpArgN'},{b='OpArgK',c='OpArgN'},{b='OpArgR',c='OpArgK'},{b='OpArgK',c='OpArgN'},{b='OpArgU',c='OpArgN'},{b='OpArgK',c='OpArgK'},{b='OpArgU',c='OpArgU'},{b='OpArgR',c='OpArgK'},{b='OpArgK',c='OpArgK'},{b='OpArgK',c='OpArgK'},{b='OpArgK',c='OpArgK'},{b='OpArgK',c='OpArgK'},{b='OpArgK',c='OpArgK'},{b='OpArgK',c='OpArgK'},{b='OpArgR',c='OpArgN'},{b='OpArgR',c='OpArgN'},{b='OpArgR',c='OpArgN'},{b='OpArgR',c='OpArgR'},{b='OpArgR',c='OpArgN'},{b='OpArgK',c='OpArgK'},{b='OpArgK',c='OpArgK'},{b='OpArgK',c='OpArgK'},{b='OpArgR',c='OpArgU'},{b='OpArgR',c='OpArgU'},{b='OpArgU',c='OpArgU'},{b='OpArgU',c='OpArgU'},{b='OpArgU',c='OpArgN'},{b='OpArgR',c='OpArgN'},{b='OpArgR',c='OpArgN'},{b='OpArgN',c='OpArgU'},{b='OpArgU',c='OpArgU'},{b='OpArgN',c='OpArgN'},{b='OpArgU',c='OpArgN'},{b='OpArgU',c='OpArgN'}}local function aa(ab,s,e,d)local ac=0;for i=s,e,d do ac=ac+string.byte(ab,i,i)*256^(i-s)end;return ac end;local function ad(ae,af,ag,ah)local ai=(-1)^bit.rshift(ah,7)local aj=bit.rshift(ag,7)+bit.lshift(bit.band(ah,0x7F),1)local ak=ae+bit.lshift(af,8)+bit.lshift(bit.band(ag,0x7F),16)local al=1;if aj==0 then if ak==0 then return ai*0 else al=0;aj=1 end elseif aj==0x7F then if ak==0 then return ai*1/0 else return ai*0/0 end end;return ai*2^(aj-127)*(1+al/2^23)end;local function am(ae,af,ag,ah,an,ao,ap,aq)local ai=(-1)^bit.rshift(aq,7)local aj=bit.lshift(bit.band(aq,0x7F),4)+bit.rshift(ap,4)local ak=bit.band(ap,0x0F)*2^48;local al=1;ak=ak+ao*2^40+an*2^32+ah*2^24+ag*2^16+af*2^8+ae;if aj==0 then if ak==0 then return ai*0 else al=0;aj=1 end elseif aj==0x7FF then if ak==0 then return ai*1/0 else return ai*0/0 end end;return ai*2^(aj-1023)*(al+ak/2^52)end;local function ar(ab,s,e)return aa(ab,s,e-1,1)end;local function as(ab,s,e)return aa(ab,e-1,s,-1)end;local function at(ab,s)return ad(string.byte(ab,s,s+3))end;local function au(ab,s)local ae,af,ag,ah=string.byte(ab,s,s+3)return ad(ah,ag,af,ae)end;local function av(ab,s)return am(string.byte(ab,s,s+7))end;local function aw(ab,s)local ae,af,ag,ah,an,ao,ap,aq=string.byte(ab,s,s+7)return am(aq,ap,ao,an,ah,ag,af,ae)end;local ax={[4]={little=at,big=au},[8]={little=av,big=aw}}local function ay(S)local az=S.index;local aA=string.byte(S.source,az,az)S.index=az+1;return aA end;local function aB(S,aC)local aD=S.index+aC;local aE=string.sub(S.source,S.index,aD-1)S.index=aD;return aE end;local function aF(S)local aC=S:s_szt()local aE;if aC~=0 then aE=string.sub(aB(S,aC),1,-2)end;return aE end;local function aG(aC,aH)return function(S)local aD=S.index+aC;local aI=aH(S.source,S.index,aD)S.index=aD;return aI end end;local function aJ(aC,aH)return function(S)local aK=aH(S.source,S.index)S.index=S.index+aC;return aK end end;local function aL(S)local aM=S:s_int()local aN={}for i=1,aM do local aO=S:s_ins()local aP=bit.band(aO,0x3F)local aQ=a8[aP]local aR=a9[aP]local aS={value=aO,op=a7[aP],A=bit.band(bit.rshift(aO,6),0xFF)}if aQ=='ABC'then aS.B=bit.band(bit.rshift(aO,23),0x1FF)aS.C=bit.band(bit.rshift(aO,14),0x1FF)aS.is_KB=aR.b=='OpArgK'and aS.B>0xFF;aS.is_KC=aR.c=='OpArgK'and aS.C>0xFF elseif aQ=='ABx'then aS.Bx=bit.band(bit.rshift(aO,14),0x3FFFF)aS.is_K=aR.b=='OpArgK'elseif aQ=='AsBx'then aS.sBx=bit.band(bit.rshift(aO,14),0x3FFFF)-131071 end;aN[i]=aS end;return aN end;local function aT(S)local aM=S:s_int()local aU={}for i=1,aM do local aV=ay(S)local k;if aV==1 then k=ay(S)~=0 elseif aV==3 then k=S:s_num()elseif aV==4 then k=aF(S)end;aU[i]=k end;return aU end;local function aW(S,ab)local aM=S:s_int()local aX={}for i=1,aM do aX[i]=a5(S,ab)end;return aX end;local function aY(S)local aM=S:s_int()local aZ={}for i=1,aM do aZ[i]=S:s_int()end;return aZ end;local function a_(S)local aM=S:s_int()local b0={}for i=1,aM do b0[i]={varname=aF(S),startpc=S:s_int(),endpc=S:s_int()}end;return b0 end;local function b1(S)local aM=S:s_int()local b2={}for i=1,aM do b2[i]=aF(S)end;return b2 end;function a5(S,b3)local b4={}local ab=aF(S)or b3;b4.source=ab;S:s_int()S:s_int()b4.numupvals=ay(S)b4.numparams=ay(S)ay(S)ay(S)b4.code=aL(S)b4.const=aT(S)b4.subs=aW(S,ab)b4.lines=aY(S)a_(S)b1(S)for _,v in ipairs(b4.code)do if v.is_K then v.const=b4.const[v.Bx+1]else if v.is_KB then v.const_B=b4.const[v.B-0xFF]end;if v.is_KC then v.const_C=b4.const[v.C-0xFF]end end end;return b4 end;function a3(ab)local b5;local b6;local b7;local b8;local b9;local ba;local bb;local bc={index=1,source=ab}assert(aB(bc,4)=='\\27Lua','invalid Lua signature')assert(ay(bc)==0x51,'invalid Lua version')assert(ay(bc)==0,'invalid Lua format')b6=ay(bc)~=0;b7=ay(bc)b8=ay(bc)b9=ay(bc)ba=ay(bc)bb=ay(bc)~=0;b5=b6 and ar or as;bc.s_int=aG(b7,b5)bc.s_szt=aG(b8,b5)bc.s_ins=aG(b9,b5)if bb then bc.s_num=aG(ba,b5)elseif ax[ba]then bc.s_num=aJ(ba,ax[ba][b6 and'little'or'big'])else error('unsupported float size')end;return a5(bc,'@virtual')end;local function bd(be,bf)for i,bg in pairs(be)do if bg.index>=bf then bg.value=bg.store[bg.index]bg.store=bg;bg.index='value'be[i]=nil end end end;local function bh(be,bf,bi)local bj=be[bf]if not bj then bj={index=bf,store=bi}be[bf]=bj end;return bj end;local function bk(...)return select('#',...),{...}end;local function bl(bm,bn)local ab=bm.source;local bo=bm.lines[bm.pc-1]local b3,bp,bq=string.match(bn,'^(.-):(%d+):%s+(.+)')local br='%s:%i: [%s:%i] %s'bo=bo or'0'b3=b3 or'?'bp=bp or'0'bq=bq or bn;error(string.format(br,ab,bo,b3,bp,bq),0)end;local function bs(bm)local aN=bm.code;local bt=bm.subs;local bu=bm.env;local bv=bm.upvals;local bw=bm.varargs;local bx=-1;local by={}local bi=bm.stack;local bz=bm.pc;while true do local bA=aN[bz]local aP=bA.op;bz=bz+1;if aP<18 then if aP<8 then if aP<3 then if aP<1 then for i=bA.A,bA.B do bi[i]=nil end elseif aP>1 then local bg=bv[bA.B]bi[bA.A]=bg.store[bg.index]else local bB,bC;if bA.is_KB then bB=bA.const_B else bB=bi[bA.B]end;if bA.is_KC then bC=bA.const_C else bC=bi[bA.C]end;bi[bA.A]=bB+bC end elseif aP>3 then if aP<6 then if aP>4 then local A=bA.A;local B=bA.B;local bf;if bA.is_KC then bf=bA.const_C else bf=bi[bA.C]end;bi[A+1]=bi[B]bi[A]=bi[B][bf]else bi[bA.A]=bu[bA.const]end elseif aP>6 then local bf;if bA.is_KC then bf=bA.const_C else bf=bi[bA.C]end;bi[bA.A]=bi[bA.B][bf]else local bB,bC;if bA.is_KB then bB=bA.const_B else bB=bi[bA.B]end;if bA.is_KC then bC=bA.const_C else bC=bi[bA.C]end;bi[bA.A]=bB-bC end else bi[bA.A]=bi[bA.B]end elseif aP>8 then if aP<13 then if aP<10 then bu[bA.const]=bi[bA.A]elseif aP>10 then if aP<12 then local A=bA.A;local B=bA.B;local C=bA.C;local bD;local bE,bF;if B==0 then bD=bx-A else bD=B-1 end;bE,bF=bk(bi[A](unpack(bi,A+1,A+bD)))if C==0 then bx=A+bE-1 else bE=C-1 end;for i=1,bE do bi[A+i-1]=bF[i]end else local bg=bv[bA.B]bg.store[bg.index]=bi[bA.A]end else local bB,bC;if bA.is_KB then bB=bA.const_B else bB=bi[bA.B]end;if bA.is_KC then bC=bA.const_C else bC=bi[bA.C]end;bi[bA.A]=bB*bC end elseif aP>13 then if aP<16 then if aP>14 then local A=bA.A;local B=bA.B;local bD;if B==0 then bD=bx-A else bD=B-1 end;bd(by,0)return bk(bi[A](unpack(bi,A+1,A+bD)))else local bf,bG;if bA.is_KB then bf=bA.const_B else bf=bi[bA.B]end;if bA.is_KC then bG=bA.const_C else bG=bi[bA.C]end;bi[bA.A][bf]=bG end elseif aP>16 then bi[bA.A]={}else local bB,bC;if bA.is_KB then bB=bA.const_B else bB=bi[bA.B]end;if bA.is_KC then bC=bA.const_C else bC=bi[bA.C]end;bi[bA.A]=bB/bC end else bi[bA.A]=bA.const end else local A=bA.A;local bH=bi[A+2]local bf=bi[A]+bH;local bI=bi[A+1]local bJ;if bH==math.abs(bH)then bJ=bf<=bI else bJ=bf>=bI end;if bJ then bi[bA.A]=bf;bi[bA.A+3]=bf;bz=bz+bA.sBx end end elseif aP>18 then if aP<28 then if aP<23 then if aP<20 then bi[bA.A]=#bi[bA.B]elseif aP>20 then if aP<22 then local A=bA.A;local B=bA.B;local bK={}local aM;if B==0 then aM=bx-A+1 else aM=B-1 end;for i=1,aM do bK[i]=bi[A+i-1]end;bd(by,0)return aM,bK else local aE=bi[bA.B]for i=bA.B+1,bA.C do aE=aE..bi[i]end;bi[bA.A]=aE end else local bB,bC;if bA.is_KB then bB=bA.const_B else bB=bi[bA.B]end;if bA.is_KC then bC=bA.const_C else bC=bi[bA.C]end;bi[bA.A]=bB%bC end elseif aP>23 then if aP<26 then if aP>24 then bd(by,bA.A)else local bB,bC;if bA.is_KB then bB=bA.const_B else bB=bi[bA.B]end;if bA.is_KC then bC=bA.const_C else bC=bi[bA.C]end;if bB==bC==(bA.A~=0)then bz=bz+aN[bz].sBx end;bz=bz+1 end elseif aP>26 then local bB,bC;if bA.is_KB then bB=bA.const_B else bB=bi[bA.B]end;if bA.is_KC then bC=bA.const_C else bC=bi[bA.C]end;if bB<bC==(bA.A~=0)then bz=bz+aN[bz].sBx end;bz=bz+1 else local bB,bC;if bA.is_KB then bB=bA.const_B else bB=bi[bA.B]end;if bA.is_KC then bC=bA.const_C else bC=bi[bA.C]end;bi[bA.A]=bB^bC end else bi[bA.A]=bA.B~=0;if bA.C~=0 then bz=bz+1 end end elseif aP>28 then if aP<33 then if aP<30 then local bB,bC;if bA.is_KB then bB=bA.const_B else bB=bi[bA.B]end;if bA.is_KC then bC=bA.const_C else bC=bi[bA.C]end;if bB<=bC==(bA.A~=0)then bz=bz+aN[bz].sBx end;bz=bz+1 elseif aP>30 then if aP<32 then local aX=bt[bA.Bx+1]local bL=aX.numupvals;local bM;if bL~=0 then bM={}for i=1,bL do local bN=aN[bz+i-1]if bN.op==a7[0]then bM[i-1]=bh(by,bN.B,bi)elseif bN.op==a7[4]then bM[i-1]=bv[bN.B]end end;bz=bz+bL end;bi[bA.A]=a4(aX,bu,bM)else local A=bA.A;local B=bA.B;if not bi[B]==(bA.C~=0)then bz=bz+1 else bi[A]=bi[B]end end else bi[bA.A]=-bi[bA.B]end elseif aP>33 then if aP<36 then if aP>34 then local A=bA.A;local aM=bA.B;if aM==0 then aM=bw.size;bx=A+aM-1 end;for i=1,aM do bi[A+i-1]=bw.list[i]end else local A=bA.A;local bO,bI,bH;bO=assert(tonumber(bi[A]),'\\`for\\` initial value must be a number')bI=assert(tonumber(bi[A+1]),'\\`for\\` limit must be a number')bH=assert(tonumber(bi[A+2]),'\\`for\\` step must be a number')bi[A]=bO-bH;bi[A+1]=bI;bi[A+2]=bH;bz=bz+bA.sBx end elseif aP>36 then local A=bA.A;local C=bA.C;local aM=bA.B;local bP=bi[A]local bQ;if aM==0 then aM=bx-A end;if C==0 then C=bA[bz].value;bz=bz+1 end;bQ=(C-1)*a6;for i=1,aM do bP[i+bQ]=bi[A+i]end else bi[bA.A]=not bi[bA.B]end else if not bi[bA.A]==(bA.C~=0)then bz=bz+1 end end else local A=bA.A;local aH=bi[A]local bR=bi[A+1]local bf=bi[A+2]local bS=A+3;local bK;bi[bS+2]=bf;bi[bS+1]=bR;bi[bS]=aH;bK={aH(bR,bf)}for i=1,bA.C do bi[bS+i-1]=bK[i]end;if bi[bS]~=nil then bi[A+2]=bi[bS]else bz=bz+1 end end else bz=bz+bA.sBx end;bm.pc=bz end end;function a4(bR,bu,b2)local bT=bR.code;local bU=bR.subs;local bV=bR.lines;local bW=bR.source;local bX=bR.numparams;local function bY(...)local bi={}local bZ={}local b_=0;local c0,c1=bk(...)local bm;local c2,bn,bK;for i=1,bX do bi[i-1]=c1[i]end;if bX<c0 then b_=c0-bX;for i=1,b_ do bZ[i]=c1[bX+i]end end;bm={varargs={list=bZ,size=b_},code=bT,subs=bU,lines=bV,source=bW,env=bu,upvals=b2,stack=bi,pc=1}c2,bn,bK=pcall(bs,bm,...)if c2 then return unpack(bK,1,bn)else bl(bm,bn)end;return end;return bY end;return function(c3,bu)return a4(a3(c3),bu or (getfenv and getfenv(0) or _ENV))end end)()";
+
+// ═══════════════════════════════════════════════════════
+//  GENERATE EXECUTOR-COMPATIBLE DECODER (pure Lua, no bit32)
+//  XOR via: math only approach
+// ═══════════════════════════════════════════════════════
+function buildDecoderBlock(encoded, key, vData, vKey, vDec) {
+  var lines = [];
+  lines.push('-- Obfuscated by SOLI Obfuscator');
+  lines.push('');
+  // alias load
+  lines.push('local _load = loadstring or load');
+  lines.push('local _unpack = table.unpack or unpack');
+  lines.push('');
+  lines.push('local ' + vData + ' = "' + encoded + '"');
+  lines.push('local ' + vKey  + ' = ' + key);
+  lines.push('');
+
+  // Pure-Lua base64 decode + XOR
+  // XOR byte without bit32: use math
+  // a XOR b = a + b - 2*(a AND b)
+  // AND via math: a AND b = math.floor((a+b-math.abs(a-b))/2)  ... not reliable
+  // Safest: use lookup table for XOR on bytes 0-255
+  // Actually: for executor, bit library IS available (Synapse/KRNL all have bit)
+  // Use: bit.bxor with fallback
+  lines.push('-- XOR helper');
+  lines.push('local _bxor = (bit and bit.bxor) or (bit32 and bit32.bxor) or function(a,b)');
+  lines.push('  local res,p = 0,1');
+  lines.push('  while a>0 or b>0 do');
+  lines.push('    local ra,rb = a%2, b%2');
+  lines.push('    if ra~=rb then res=res+p end');
+  lines.push('    a,b,p = math.floor(a/2),math.floor(b/2),p*2');
+  lines.push('  end');
+  lines.push('  return res');
+  lines.push('end');
+  lines.push('');
+
+  lines.push('local function ' + vDec + '(data, k)');
+  lines.push('  local b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"');
+  lines.push('  local lkp = {}');
+  lines.push('  for i=1,#b64 do lkp[b64:sub(i,i)] = i-1 end');
+  lines.push('  local out = {}');
+  lines.push('  local buf, bits = 0, 0');
+  lines.push('  local di = 1');
+  lines.push('  for i=1,#data do');
+  lines.push('    local c = data:sub(i,i)');
+  lines.push('    if c ~= "=" then');
+  lines.push('      local v = lkp[c]');
+  lines.push('      if v then');
+  lines.push('        buf = buf * 64 + v');
+  lines.push('        bits = bits + 6');
+  lines.push('        if bits >= 8 then');
+  lines.push('          bits = bits - 8');
+  lines.push('          local byte = math.floor(buf / (2^bits)) % 256');
+  lines.push('          out[di] = string.char(_bxor(byte, k))');
+  lines.push('          di = di + 1');
+  lines.push('        end');
+  lines.push('      end');
+  lines.push('    end');
+  lines.push('  end');
+  lines.push('  return table.concat(out)');
+  lines.push('end');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════
+//  MAIN OBFUSCATE
+// ═══════════════════════════════════════════════════════
+async function doObf() {
+  var inputEl  = document.getElementById('input');
+  var outputEl = document.getElementById('output');
+  var btn      = document.getElementById('obfBtn');
+  var useAT    = document.getElementById('useAT').checked;
+  var useVM    = document.getElementById('useVM').checked;
+  var useRep   = document.getElementById('useRep').checked;
+  var repCount = parseInt(document.getElementById('repCount').value) || 1;
+
+  var code = inputEl.value.trim();
+  var layers = 0;
+
   btn.disabled = true;
-  showStatus('// Obfuscating...', 'loading');
-  output.value = '';
-  hashDisplay.textContent = '';
+  outputEl.value = '';
+  setStatus('Processing...', 'process');
+  setLayers(0);
+
+  await new Promise(r => setTimeout(r, 400));
+
+  if (!code) {
+    setStatus('Input kosong! Paste kode Lua dulu.', 'error');
+    btn.disabled = false; return;
+  }
+  if (!looksLikeLua(code)) {
+    setStatus('Kode tidak terdeteksi sebagai Lua. Cek input kamu.', 'error');
+    btn.disabled = false; return;
+  }
+  if (useRep && (isNaN(repCount) || repCount < 1 || repCount > 50)) {
+    setStatus('Repetition harus antara 1-50.', 'error');
+    btn.disabled = false; return;
+  }
+  if (!useRep) repCount = 1;
+
   try {
-    const res = await fetch('/obfuscate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, useVM, useAT })
-    });
-    const data = await res.json();
-    if (data.error) { showStatus('Error: ' + data.error, 'err'); return; }
-    output.value = data.result;
-    const hashMatch = data.result.match(/VM-Hash: ([a-f0-9]+)/);
-    if (hashMatch) hashDisplay.textContent = '// VM-Hash: ' + hashMatch[1];
-    showStatus('// Obfuscation complete! ' + data.result.length + ' bytes', 'ok');
+    // Layer 1: Mangle names
+    var step = mangleNames(code);
+    layers++;
+    setLayers(layers);
+    await new Promise(r => setTimeout(r, 100));
+
+    // Layer 2: Encode strings
+    step = encodeStrings(step);
+    layers++;
+    setLayers(layers);
+    await new Promise(r => setTimeout(r, 100));
+
+    // Layer 3: Obfuscate numbers
+    step = obfNums(step);
+    layers++;
+    setLayers(layers);
+    await new Promise(r => setTimeout(r, 100));
+
+    // Layer 4: XOR + Base64
+    var key = Math.floor(Math.random() * 120) + 50;
+    var xored = xorEncode(step, key);
+    var encoded = safeBtoa(xored);
+    layers++;
+    setLayers(layers);
+
+    // Variable names
+    var vData = randVar(6);
+    var vKey  = randVar(6);
+    var vDec  = randVar(7);
+    var vCode = randVar(6);
+    var vFunc = randVar(6);
+
+    var block = buildDecoderBlock(encoded, key, vData, vKey, vDec);
+
+    // Layer 5: Anti-Tamper
+    if (useAT) {
+      var h = simpleHash(encoded);
+      var vExp = randVar(5);
+      var vChk = randVar(8);
+      block += '-- Anti-Tamper\n';
+      block += 'local ' + vExp + ' = ' + h + '\n';
+      block += 'local function ' + vChk + '(s)\n';
+      block += '  local h = 0\n';
+      block += '  for i=1,#s do h = (h*31 + string.byte(s,i)) % 1000000007 end\n';
+      block += '  if h ~= ' + vExp + ' then error("Tamper detected!") end\n';
+      block += 'end\n';
+      block += vChk + '(' + vData + ')\n\n';
+      layers++;
+      setLayers(layers);
+    }
+
+    // Layer 6: VM or direct load
+    if (useVM) {
+      var vGetEnv   = randVar(5);
+      var vVmSrc    = randVar(6);
+      var vVmLoader = randVar(6);
+      var vVmRun    = randVar(6);
+      var vExec     = randVar(6);
+
+      block += '-- VM Wrapper\n';
+      block += 'local ' + vGetEnv + ' = (getfenv and getfenv(0)) or _ENV\n';
+      block += 'local ' + vVmSrc + ' = [=[\n' + FIONE_VM + '\n]=]\n';
+      block += 'local ' + vVmLoader + ' = _load(' + vVmSrc + ')\n';
+      block += 'if not ' + vVmLoader + ' then error("SOLI VM: compile failed") end\n';
+      block += 'local ' + vVmRun + ' = ' + vVmLoader + '()\n';
+      block += 'local ' + vExec + ' = ' + vVmRun + '(' + vDec + '(' + vData + ', ' + vKey + '), ' + vGetEnv + ')\n';
+      block += 'if ' + vExec + ' then ' + vExec + '() else error("SOLI VM: exec failed") end\n';
+      layers++;
+      setLayers(layers);
+    } else {
+      block += 'local ' + vCode + ' = ' + vDec + '(' + vData + ', ' + vKey + ')\n';
+      block += 'local ' + vFunc + ', _err = _load(' + vCode + ')\n';
+      block += 'if ' + vFunc + ' then\n';
+      block += '  ' + vFunc + '()\n';
+      block += 'else\n';
+      block += '  error("SOLI: " .. tostring(_err))\n';
+      block += 'end\n';
+    }
+
+    // Repeat if needed
+    var finalOut = '';
+    for (var i = 0; i < repCount; i++) finalOut += block + '\n';
+
+    outputEl.value = finalOut;
+    setStatus('Selesai! ' + layers + ' layer', 'done');
+    setLayers(layers);
+
   } catch(e) {
-    showStatus('Connection error: ' + e.message, 'err');
+    setStatus('Error: ' + e.message, 'error');
+    console.error(e);
   } finally {
     btn.disabled = false;
   }
 }
-async function copyOutput() {
-  const val = document.getElementById('output').value;
-  if (!val) { showStatus('Nothing to copy!', 'err'); return; }
+
+// ═══════════════════════════════════════════════════════
+//  COPY
+// ═══════════════════════════════════════════════════════
+async function doCopy() {
+  var out = document.getElementById('output').value;
+  if (!out.trim()) { setStatus('Belum ada output untuk dicopy!', 'error'); return; }
+
   try {
-    await navigator.clipboard.writeText(val);
-    const btn = document.getElementById('copyBtn');
-    btn.textContent = '[ Copied! ]';
-    setTimeout(() => btn.textContent = '[ Copy Output ]', 1500);
-  } catch { showStatus('Copy failed, please copy manually.', 'err'); }
+    await navigator.clipboard.writeText(out);
+  } catch(e) {
+    var ta = document.createElement('textarea');
+    ta.value = out;
+    ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+
+  var btn = document.querySelector('.btn-secondary');
+  var orig = btn.textContent;
+  btn.textContent = '✓ Copied!';
+  btn.style.color = 'var(--accent)';
+  btn.style.borderColor = 'var(--accent)';
+  setTimeout(function() {
+    btn.textContent = orig;
+    btn.style.color = '';
+    btn.style.borderColor = '';
+  }, 1500);
+  setStatus('Output berhasil dicopy ke clipboard!', 'done');
 }
-function showStatus(msg, type) {
-  const el = document.getElementById('status');
-  el.textContent = msg;
-  el.className = 'status ' + type;
-}
-document.getElementById('input').addEventListener('keydown', e => {
-  if (e.ctrlKey && e.key === 'Enter') obfuscate();
-});
 </script>
 </body>
 </html>
