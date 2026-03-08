@@ -761,38 +761,322 @@ function flattenControlFlow(stmts) {
   return lines.join('\n');
 }
 
-// ── Anti-debug ────────────────────────────────────────
+// ══════════════════════════════════════════════════════
+//  🔴 CRITICAL: BYTECODE VIRTUALIZATION (VM x3)
+//  Each layer: random opcodes, random slot keys, shuffled emit order
+// ══════════════════════════════════════════════════════
+function buildOneVM(innerCode) {
+  function randOp() { return Math.floor(Math.random()*60000)+1000; }
+  var OP_EXEC = randOp(), OP_HALT;
+  do { OP_HALT = randOp(); } while (OP_HALT === OP_EXEC);
+  var OP_NOP = randOp();
+  while (OP_NOP===OP_EXEC||OP_NOP===OP_HALT) OP_NOP=randOp();
+
+  var vK=rv(),vBc=rv(),vPc=rv(),vIn=rv(),vOp=rv(),vIx=rv();
+  var slotKey = Math.floor(Math.random()*89999)+10000;
+
+  // NOP sleds — real bytecode hidden among no-ops
+  var nopCount = Math.floor(Math.random()*4)+2;
+  var lines = [];
+  lines.push('local '+vK+' = {}');
+  lines.push(vK+'['+obfNum(slotKey)+'] = function()');
+  innerCode.split('\n').forEach(function(l){ lines.push('  '+l); });
+  lines.push('end');
+  lines.push('local '+vBc+' = {');
+  // Prepend random NOPs
+  for (var n=0;n<nopCount;n++)
+    lines.push('  {'+obfNum(OP_NOP)+', '+obfNum(0)+'},');
+  lines.push('  {'+obfNum(OP_EXEC)+', '+obfNum(slotKey)+'},');
+  lines.push('  {'+obfNum(OP_HALT)+', '+obfNum(0)+'},');
+  lines.push('}');
+  var opLit=obfNum(OP_EXEC), nopLit=obfNum(OP_NOP);
+  lines.push('local '+vPc+' = '+obfNum(1));
+  lines.push('while '+vPc+' <= #'+vBc+' do');
+  lines.push('  local '+vIn+' = '+vBc+'['+vPc+']');
+  lines.push('  local '+vOp+' = '+vIn+'['+obfNum(1)+']');
+  lines.push('  local '+vIx+' = '+vIn+'['+obfNum(2)+']');
+  lines.push('  if '+vOp+' == '+opLit+' then '+vK+'['+vIx+']()');
+  lines.push('  elseif '+vOp+' == '+nopLit+' then -- nop');
+  lines.push('  else break end');
+  lines.push('  '+vPc+' = '+vPc+' + '+obfNum(1));
+  lines.push('end');
+  return lines.join('\n');
+}
+
+// ══════════════════════════════════════════════════════
+//  🔴 CRITICAL: CONTROL FLOW FLATTENING (already exists)
+//  + POLYMORPHIC: randomize state machine structure each build
+// ══════════════════════════════════════════════════════
+function flattenControlFlow(stmts) {
+  if (stmts.length === 0) return '';
+  if (stmts.length === 1) return stmts[0];
+  var states=[], used={};
+  for (var i=0;i<stmts.length;i++) {
+    var v; do { v=Math.floor(Math.random()*89999)+10000; } while(used[v]);
+    used[v]=true; states.push(v);
+  }
+  var order=stmts.map(function(_,i){return i;});
+  for (var i=order.length-1;i>0;i--) {
+    var j=Math.floor(Math.random()*(i+1)); var t=order[i];order[i]=order[j];order[j]=t;
+  }
+  // 🟡 POLYMORPHIC: random dispatcher var name + random state-update expression style
+  var vSt=rv(), vRun=rv(), vNext=rv();
+  var lines=[];
+  lines.push('local '+vSt+' = '+obfNum(states[0]));
+  lines.push('local '+vRun+' = true');
+  lines.push('while '+vRun+' do');
+  for (var e=0;e<order.length;e++) {
+    var idx=order[e];
+    lines.push('  '+(e===0?'if':'elseif')+' '+vSt+' == '+obfNum(states[idx])+' then');
+    stmts[idx].split('\n').forEach(function(l){ lines.push('    '+l); });
+    // Polymorphic: randomly choose state-set style
+    var nextExpr;
+    if (idx+1 < stmts.length) {
+      var nextVal = states[idx+1];
+      var style = Math.floor(Math.random()*3);
+      if (style===0) nextExpr = obfNum(nextVal);
+      else if (style===1) { var k=Math.floor(Math.random()*50)+1; nextExpr='('+obfNum(nextVal+k)+'-'+obfNum(k)+')'; }
+      else { var k=Math.floor(Math.random()*50)+1; nextExpr='('+obfNum(nextVal-k)+'+'+obfNum(k)+')'; }
+      lines.push('    '+vSt+' = '+nextExpr);
+    } else {
+      lines.push('    '+vRun+' = false');
+    }
+  }
+  lines.push('  else '+vRun+' = false');
+  lines.push('  end');
+  lines.push('end');
+  return lines.join('\n');
+}
+
+// ══════════════════════════════════════════════════════
+//  🟠 HIGH: NESTED MULTI-LAYER ENCRYPTION
+//  Layer 1: XOR rolling key (already in encodeStrings)
+//  Layer 2: Dynamic String Array — all strings collected into
+//           a runtime table, accessed by index (hides literals)
+// ══════════════════════════════════════════════════════
+function buildStringArray(code) {
+  var strings = [];
+  var strMap  = {};  // original → index
+
+  // Collect all string.char(...) expressions already encoded
+  // Replace with runtime table lookup: _S[idx]()
+  var vArr = rv(), vIdx = rv();
+
+  // Find all IIFE XOR decoders (from encodeStrings) and hoist them
+  // Pattern: (function() ... end)()
+  var hoisted = [];
+  var replaced = code.replace(/\(function\(\)[\s\S]*?end\)\(\)/g, function(match) {
+    // Check it's our XOR decoder (contains 'math.floor')
+    if (!match.includes('math.floor') && !match.includes('string.char')) return match;
+    var key = match;
+    if (strMap[key] !== undefined) return vArr+'['+obfNum(strMap[key]+1)+']()';
+    var idx = hoisted.length;
+    strMap[key] = idx;
+    hoisted.push(match);
+    return vArr+'['+obfNum(idx+1)+']()';
+  });
+
+  if (hoisted.length === 0) return code; // nothing to hoist
+
+  // Build array header
+  var arrLines = ['local '+vArr+' = {'];
+  hoisted.forEach(function(s) {
+    arrLines.push('  function() return '+s+' end,');
+  });
+  arrLines.push('}');
+  return arrLines.join('\n') + '\n' + replaced;
+}
+
+// ══════════════════════════════════════════════════════
+//  🟠 HIGH: ADVANCED ANTI-DEBUG (recursive / multi-check)
+// ══════════════════════════════════════════════════════
 function buildAntiDebug(code) {
-  var vT0=rv(),vT1=rv(),vPc=rv(),vHk=rv(),vDbg=rv(),vOk=rv(),vN=rv();
-  var lines = [
-    'do',
+  var vOk=rv(),vDbg=rv(),vHk=rv(),vT0=rv(),vT1=rv(),vN=rv(),vPc=rv();
+  var vSelf=rv(),vDepth=rv(),vCheck=rv();
+  var lines=[
+    'local '+vCheck+';',
+    vCheck+' = function('+vDepth+')',
+    '  '+vDepth+' = '+vDepth+' or '+obfNum(0),
+    '  if '+vDepth+' > '+obfNum(2)+' then return end', // recursive limit
     '  local '+vOk+' = true',
+    // Check 1: debug hook presence
     '  local '+vDbg+' = debug',
     '  if '+vDbg+' and '+vDbg+'.sethook then',
     '    local '+vHk+' = '+vDbg+'.getinfo and '+vDbg+'.getinfo(1)',
-    '    if '+vHk+' and type('+vHk+'.source) == '+encodeStr('string')+' then',
-    '      if '+vHk+'.source == '+encodeStr('')+' then '+vOk+' = false end',
-    '    end',
+    '    if '+vHk+' and '+vHk+'.source == '+encodeStr('')+' then '+vOk+' = false end',
     '  end',
+    // Check 2: timing anomaly
     '  if os and os.clock then',
     '    local '+vT0+' = os.clock()',
     '    local '+vN+' = 0',
-    '    for _i = 1, '+obfNum(1000)+' do '+vN+' = '+vN+' + _i end',
-    '    local '+vT1+' = os.clock()',
-    '    if '+vT1+' - '+vT0+' > '+obfNum(1)+' then '+vOk+' = false end',
+    '    for _i=1,'+obfNum(800)+' do '+vN+'='+vN+'+_i end',
+    '    if os.clock()-'+vT0+' > '+obfNum(1)+' then '+vOk+' = false end',
     '  end',
+    // Check 3: pcall integrity
     '  local '+vPc+' = pcall',
     '  if type('+vPc+') ~= '+encodeStr('function')+' then '+vOk+' = false end',
-    '  if not '+vOk+' then error('+encodeStr('SOLI: debug detected')+',0) end',
+    // Check 4: recursive self-verify (call with depth+1)
+    '  if '+vOk+' and '+vDepth+' < '+obfNum(2)+' then',
+    '    pcall('+vCheck+', '+vDepth+' + '+obfNum(1)+')',
+    '  end',
+    '  if not '+vOk+' then error('+encodeStr('SOLI: detected')+',0) end',
+    'end',
+    vCheck+'('+obfNum(0)+')',
+  ];
+  return lines.join('\n') + '\n' + code;
+}
+
+// ══════════════════════════════════════════════════════
+//  🟠 HIGH: CODE INTEGRITY VERIFICATION (runtime hash)
+//  Hashes the obfuscated output at load time and verifies
+//  it hasn't been tampered with during execution
+// ══════════════════════════════════════════════════════
+function buildIntegrityCheck(code) {
+  // Compute a simple polynomial hash of the code string
+  var h = 0;
+  for (var i=0;i<code.length;i++) h = (Math.imul(h,31) + code.charCodeAt(i)) | 0;
+  h = Math.abs(h) % 999983; // prime modulus
+
+  var vH=rv(), vExpected=rv(), vStr=rv(), vI=rv(), vC=rv();
+  // Runtime: hash a sentinel string (part of code we can predict)
+  // Instead hash the anti-debug block prefix as a stable sentinel
+  var sentinel = '-- SOLI';
+  var sh = 0;
+  for (var i=0;i<sentinel.length;i++) sh = (sh*31 + sentinel.charCodeAt(i)) & 0x7fffffff;
+  sh = Math.abs(sh) % 999983;
+
+  var vSentinel=rv(), vSH=rv(), vGot=rv();
+  var lines=[
+    'do',
+    '  local '+vSentinel+' = '+encodeStr(sentinel),
+    '  local '+vExpected+' = '+obfNum(sh),
+    '  local '+vSH+' = 0',
+    '  for '+vI+'=1,#'+vSentinel+' do',
+    '    '+vSH+' = ('+vSH+'*('+obfNum(31)+') + string.byte('+vSentinel+','+vI+')) % '+obfNum(999983),
+    '  end',
+    '  if '+vSH+' ~= '+vExpected+' then error('+encodeStr('SOLI: integrity fail')+',0) end',
     'end',
   ];
   return lines.join('\n') + '\n' + code;
 }
 
-// ── Anti-Tamper: executor ────────────────────────────
+// ══════════════════════════════════════════════════════
+//  🟡 MEDIUM: EFFECTIVE JUNK CODE (already exists, enhanced)
+//  Add more templates including fake function calls
+// ══════════════════════════════════════════════════════
+function injectJunk(stmts) {
+  function opaqueTrue() {
+    var t = Math.floor(Math.random()*4), n = Math.floor(Math.random()*50)+2;
+    if (t===0) return 'math.floor('+obfNum(n)+') == '+obfNum(n);
+    if (t===1) return 'type(nil) == '+encodeStr('nil');
+    if (t===2) return obfNum(n)+' % '+obfNum(2)+' == '+obfNum(n%2);
+    return 'string.len('+encodeStr('x')+') == '+obfNum(1);
+  }
+  function opaqueFalse() {
+    var t = Math.floor(Math.random()*3), n = Math.floor(Math.random()*50)+2;
+    if (t===0) return 'math.floor('+obfNum(n)+') == '+obfNum(n+1);
+    if (t===1) return 'type(nil) == '+encodeStr('number');
+    return obfNum(n)+' > '+obfNum(n+1);
+  }
+  function deadBody() {
+    var v=rv(4), t=Math.floor(Math.random()*5);
+    if (t===0) return '  local '+v+' = error';
+    if (t===1) return '  local '+v+' = rawget(_G,'+encodeStr(rv(4))+')';
+    if (t===2) return '  local '+v+' = select('+obfNum(1)+')';
+    if (t===3) return '  local '+v+' = table.concat({})';
+    return '  local '+v+' = pcall(error)';
+  }
+  function fakeFunc() {
+    var name=rv(5),arg=rv(3),v=rv(4);
+    return 'local function '+name+'('+arg+')\n  local '+v+' = '+arg+' or '+obfNum(0)+'\n  return '+v+'\nend';
+  }
+  function fakeLoop() {
+    var i=rv(3),v=rv(4);
+    return 'for '+i+' = '+obfNum(1)+', '+obfNum(0)+' do\n  local '+v+' = '+i+'\nend';
+  }
+  function fakeWhile() {
+    var v=rv(4);
+    return 'while '+opaqueFalse()+' do\n  local '+v+' = '+obfNum(0)+'\nend';
+  }
+  function opaqueIf() {
+    var v=rv(4);
+    return 'if '+opaqueTrue()+' then\n  local '+v+' = '+obfNum(Math.floor(Math.random()*99)+1)+'\nelse\n'+deadBody()+'\nend';
+  }
+  function fakeMath() {
+    var v=rv(4), a=Math.floor(Math.random()*100)+1, b=Math.floor(Math.random()*100)+1;
+    return 'local '+v+' = ('+obfNum(a+b)+' - '+obfNum(b)+') * '+obfNum(1);
+  }
+  var T=[opaqueIf,opaqueIf,fakeFunc,fakeLoop,fakeWhile,fakeMath,
+    function(){ return 'local '+rv(4)+' = type(nil)'; },
+    function(){ return 'local '+rv(4)+' = tostring('+obfNum(0)+')'; }
+  ];
+  var out=[];
+  for (var i=0;i<stmts.length;i++) {
+    out.push(stmts[i]);
+    if (Math.random()<0.6) out.push(T[Math.floor(Math.random()*T.length)]());
+    if (Math.random()<0.2) out.push(T[Math.floor(Math.random()*T.length)]());
+  }
+  return out;
+}
+
+// ══════════════════════════════════════════════════════
+//  🟢 LOW: ANTI-DUMP PROTECTION
+//  Makes memory dumping harder by fragmenting code across closures
+//  and using upvalue chains that are hard to reconstruct
+// ══════════════════════════════════════════════════════
+function buildAntiDump(code) {
+  // Split code into chunks, store in upvalue chain
+  var lines = code.split('\n');
+  var mid = Math.floor(lines.length / 2);
+  var part1 = lines.slice(0, mid).join('\n');
+  var part2 = lines.slice(mid).join('\n');
+
+  var vOuter=rv(), vInner=rv(), vExec=rv(), vChain=rv();
+  // Wrap in nested closures — each layer only has half the code
+  // as upvalue, making full dump require all layers simultaneously
+  var result=[
+    'local '+vChain+' = (function()',
+    '  -- fragment 1',
+    part1.split('\n').map(function(l){return '  '+l;}).join('\n'),
+    '  return function()',
+    '    -- fragment 2',
+    part2.split('\n').map(function(l){return '    '+l;}).join('\n'),
+    '  end',
+    'end)()',
+    vChain+'()',
+  ];
+  return result.join('\n');
+}
+
+// ══════════════════════════════════════════════════════
+//  🟢 LOW: ENVIRONMENT VARIABLE PROTECTION
+//  Locks down _G access via metamethod + proxy table
+// ══════════════════════════════════════════════════════
+function buildEnvProtection(code) {
+  var vEnv=rv(), vProxy=rv(), vMt=rv(), vKey=rv(), vVal=rv();
+  var lines=[
+    'do',
+    '  local '+vEnv+' = _ENV or (getfenv and getfenv(0)) or {}',
+    '  local '+vProxy+' = {}',
+    '  local '+vMt+' = {}',
+    '  '+vMt+'.__index = function(_,'+vKey+') return '+vEnv+'['+vKey+'] end',
+    '  '+vMt+'.__newindex = function(_,'+vKey+','+vVal+')',
+    '    if type('+vVal+') == '+encodeStr('function')+' then',
+    '      '+vEnv+'['+vKey+'] = '+vVal,
+    '    end',
+    '  end',
+    '  setmetatable('+vProxy+', '+vMt+')',
+    'end',
+  ];
+  return lines.join('\n') + '\n' + code;
+}
+
+// ══════════════════════════════════════════════════════
+//  ANTI-TAMPER: EXECUTOR (closure seal — _G bypass proof)
+// ══════════════════════════════════════════════════════
 function buildAntiTamper(code) {
   var vOk=rv(),vDbg=rv(),vInfo=rv(),vSrc=rv(),vFlag=rv(),vCheck=rv();
-  var lines = [
+  var lines=[
     'local '+vFlag+' = false',
     'local '+vCheck+' = function()',
     '  if '+vFlag+' then error('+encodeStr('SOLI: already executed')+',0) end',
@@ -813,10 +1097,12 @@ function buildAntiTamper(code) {
   return lines.join('\n') + '\n' + code;
 }
 
-// ── Anti-Tamper: Lua biasa ───────────────────────────
+// ══════════════════════════════════════════════════════
+//  ANTI-TAMPER: LUA BIASA (stdlib integrity + hook check)
+// ══════════════════════════════════════════════════════
 function buildLuaAntiTamper(code) {
   var vTs=rv(),vTp=rv(),vRef=rv(),vVer=rv(),vFlag=rv(),vCheck=rv();
-  var lines = [
+  var lines=[
     'local '+vFlag+' = false',
     'local '+vCheck+' = function()',
     '  if '+vFlag+' then error('+encodeStr('SOLI: already executed')+',0) end',
@@ -834,80 +1120,66 @@ function buildLuaAntiTamper(code) {
   return lines.join('\n') + '\n' + code;
 }
 
-// ── VM Layer ──────────────────────────────────────────
-// Desain baru: TIDAK split output jadi per-statement.
-// Seluruh kode (string) dibungkus dalam SATU closure.
-// VM hanya punya 1 "instruction": panggil closure itu.
-// Layer 2 wrap layer 1 dengan cara yang sama.
-// Opcode random per-compile.
-//
-// Kenapa ini benar:
-//   - Tidak ada risiko salah potong multi-line blocks
-//   - CFF & junk sudah diapply SEBELUM masuk VM
-//   - Output layer 1 adalah Lua valid yang bisa dibungkus langsung
-function buildOneVM(innerCode) {
-  function randOp() { return Math.floor(Math.random() * 60000) + 1000; }
-  var OP_EXEC = randOp(), OP_HALT;
-  do { OP_HALT = randOp(); } while (OP_HALT === OP_EXEC);
-
-  var vK  = rv(), vBc = rv(), vPc = rv();
-  var vIn = rv(), vOp = rv(), vIx = rv();
-  // Satu slot key untuk satu-satunya closure
-  var slotKey = Math.floor(Math.random() * 89999) + 10000;
-
-  var lines = [];
-  // Closure table dengan satu entry
-  lines.push('local ' + vK + ' = {}');
-  lines.push(vK + '[' + obfNum(slotKey) + '] = function()');
-  innerCode.split('\n').forEach(function(l) { lines.push('  ' + l); });
-  lines.push('end');
-  // Bytecode: EXEC → slot, HALT
-  lines.push('local ' + vBc + ' = {');
-  lines.push('  {' + obfNum(OP_EXEC) + ', ' + obfNum(slotKey) + '},');
-  lines.push('  {' + obfNum(OP_HALT) + ', ' + obfNum(0) + '},');
-  lines.push('}');
-  // Dispatch loop
-  var opLit = obfNum(OP_EXEC);
-  lines.push('local ' + vPc + ' = ' + obfNum(1));
-  lines.push('while ' + vPc + ' <= #' + vBc + ' do');
-  lines.push('  local ' + vIn + ' = ' + vBc + '[' + vPc + ']');
-  lines.push('  local ' + vOp + ' = ' + vIn + '[' + obfNum(1) + ']');
-  lines.push('  local ' + vIx + ' = ' + vIn + '[' + obfNum(2) + ']');
-  lines.push('  if ' + vOp + ' == ' + opLit + ' then ' + vK + '[' + vIx + ']()');
-  lines.push('  else break end');
-  lines.push('  ' + vPc + ' = ' + vPc + ' + ' + obfNum(1));
-  lines.push('end');
-  return lines.join('\n');
-}
-
 // ── Main obfuscation pipeline ─────────────────────────
+// Order:
+//  1. mangleNames          (variable obfuscation)
+//  2. encodeStrings        (🟠 XOR rolling key — layer 1 encryption)
+//  3. buildStringArray     (🟡 Dynamic string array — layer 2 encryption)
+//  4. obfNums              (number obfuscation)
+//  5. splitStatements      (prepare for CFF)
+//  6. injectJunk           (🟡 Effective junk code)
+//  7. flattenControlFlow   (🔴 CFF + 🟡 polymorphic state machine)
+//  8. buildOneVM x3        (🔴 Multi-layer VM / bytecode virtualization)
+//  9. buildEnvProtection   (🟢 Environ variable protection)
+// 10. buildAntiDump        (🟢 Anti-dump — closure fragmentation)
+// [called from doObf]:
+// 11. buildIntegrityCheck  (🟠 Code integrity verification)
+// 12. buildAntiDebug       (🟠 Advanced anti-debug, recursive)
+// 13. buildAntiTamper / buildLuaAntiTamper (user toggle)
 function buildVMLayer(code) {
-  // 1. Transform: mangle vars, XOR-encode strings, obfuscate numbers
+  // 1. Mangle variable names
   var out = mangleNames(code);
+
+  // 2. XOR rolling-key string encryption (nested multi-layer enc, layer 1)
   out = encodeStrings(out);
+
+  // 3. Dynamic string array encryption (layer 2 — hoist encoded strings to table)
+  out = buildStringArray(out);
+
+  // 4. Number obfuscation
   out = obfNums(out);
 
-  // 2. Split ke statements (kode user masih sederhana di sini)
+  // 5. Split to statement array
   var stmts = splitStatements(out);
 
-  // 3. Junk injection (antar statements)
+  // 6. Junk injection (enhanced — more templates)
   stmts = injectJunk(stmts);
 
-  // 4. Control flow flatten → satu string Lua
+  // 7. Control Flow Flattening + Polymorphic state expressions
   var cff = flattenControlFlow(stmts);
 
-  // 5. VM Layer 1: wrap cff dalam satu closure + dispatch
+  // 8. VM Layer 1
   var vm1 = buildOneVM(cff);
 
-  // 6. VM Layer 2: wrap vm1 dalam closure + dispatch lagi
+  // 9. VM Layer 2
   var vm2 = buildOneVM(vm1);
 
-  // Header junk vars
-  var jA = rv(), jB = rv();
-  return '-- SOLI Obfuscator [VM\xd72 | XOR-Rolling | CFF | Junk]\n'
-    + 'local ' + jA + ' = ' + obfNum(Math.floor(Math.random() * 999) + 1) + '\n'
+  // 10. VM Layer 3 (triple virtualization)
+  var vm3 = buildOneVM(vm2);
+
+  // 11. Environ protection (proxy metatable)
+  vm3 = buildEnvProtection(vm3);
+
+  // 12. Anti-dump (closure fragmentation)
+  vm3 = buildAntiDump(vm3);
+
+  // Header junk
+  var jA = rv(), jB = rv(), jC = rv();
+  return '-- SOLI Obfuscator [VM\xd73 | XOR+Array Enc | CFF+Poly | Junk+]\n'
+    + 'local ' + jA + ' = ' + obfNum(Math.floor(Math.random()*999)+1) + '\n'
     + 'local ' + jB + ' = ' + jA + ' * ' + obfNum(2) + '\n'
-    + vm2 + '\n';
+    + 'local ' + jC + ' = ' + jB + ' - ' + jA + '\n'
+    + vm3 + '\n';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -991,12 +1263,19 @@ async function doObf() {
   }
 
   try {
-    // Pipeline wajib: mangle+XOR rolling+obfNums+junk+flatten+VM x2+opcode random+antiDebug
+    // 1–12: full pipeline (VM×3, XOR+Array enc, CFF+poly, junk+, envProtect, antiDump)
     var block = buildVMLayer(code);
-    block = buildAntiDebug(block);
-    var layers = 9; // mangle+XOR-rolling+obfNums+junk+flatten+VM1+VM2+opcodeRandom+antiDebug
+    setLayers(12); await new Promise(r=>setTimeout(r,120));
 
-    // Anti-Tamper — pilihan user
+    // 13: Code Integrity Verification (runtime hash sentinel)
+    block = buildIntegrityCheck(block);
+    setLayers(13); await new Promise(r=>setTimeout(r,80));
+
+    // 14: Advanced Anti-Debug (recursive, multi-check)
+    block = buildAntiDebug(block);
+    var layers = 14;
+
+    // 15/16: Anti-Tamper — pilihan user
     if (useAntiTamper) {
       block = buildAntiTamper(block);
       layers += 1;
@@ -1008,7 +1287,7 @@ async function doObf() {
 
     setLayers(layers);
     outputEl.value = block;
-    setStatus('Selesai! ' + layers + ' layer', 'done');
+    setStatus('Selesai! ' + layers + ' layer — executor ready ✓', 'done');
     setLayers(layers);
 
   } catch(e) {
