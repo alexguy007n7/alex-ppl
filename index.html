@@ -774,31 +774,34 @@ function buildOneVM(innerCode) {
 
   var vK=rv(),vBc=rv(),vPc=rv(),vIn=rv(),vOp=rv(),vIx=rv();
   var slotKey = Math.floor(Math.random()*89999)+10000;
-
-  // NOP sleds — real bytecode hidden among no-ops
   var nopCount = Math.floor(Math.random()*4)+2;
+
   var lines = [];
-  lines.push('local '+vK+' = {}');
-  lines.push(vK+'['+obfNum(slotKey)+'] = function()');
-  innerCode.split('\n').forEach(function(l){ lines.push('  '+l); });
+  // Inline: put innerCode directly inside closure body — safe in LocalScript
+  lines.push('local ' + vK + ' = {}');
+  lines.push(vK + '[' + obfNum(slotKey) + '] = function()');
+  innerCode.split('\n').forEach(function(l) { lines.push('  ' + l); });
   lines.push('end');
-  lines.push('local '+vBc+' = {');
-  // Prepend random NOPs
-  for (var n=0;n<nopCount;n++)
-    lines.push('  {'+obfNum(OP_NOP)+', '+obfNum(0)+'},');
-  lines.push('  {'+obfNum(OP_EXEC)+', '+obfNum(slotKey)+'},');
-  lines.push('  {'+obfNum(OP_HALT)+', '+obfNum(0)+'},');
+  lines.push('local ' + vBc + ' = {');
+  for (var n = 0; n < nopCount; n++)
+    lines.push('  {' + obfNum(OP_NOP) + ', ' + obfNum(0) + '},');
+  lines.push('  {' + obfNum(OP_EXEC) + ', ' + obfNum(slotKey) + '},');
+  lines.push('  {' + obfNum(OP_HALT) + ', ' + obfNum(0) + '},');
   lines.push('}');
-  var opLit=obfNum(OP_EXEC), nopLit=obfNum(OP_NOP);
-  lines.push('local '+vPc+' = '+obfNum(1));
-  lines.push('while '+vPc+' <= #'+vBc+' do');
-  lines.push('  local '+vIn+' = '+vBc+'['+vPc+']');
-  lines.push('  local '+vOp+' = '+vIn+'['+obfNum(1)+']');
-  lines.push('  local '+vIx+' = '+vIn+'['+obfNum(2)+']');
-  lines.push('  if '+vOp+' == '+opLit+' then '+vK+'['+vIx+']()');
-  lines.push('  elseif '+vOp+' == '+nopLit+' then -- nop');
-  lines.push('  else break end');
-  lines.push('  '+vPc+' = '+vPc+' + '+obfNum(1));
+  var opLit = obfNum(OP_EXEC), nopLit = obfNum(OP_NOP);
+  lines.push('local ' + vPc + ' = ' + obfNum(1));
+  lines.push('while ' + vPc + ' <= #' + vBc + ' do');
+  lines.push('  local ' + vIn + ' = ' + vBc + '[' + vPc + ']');
+  lines.push('  local ' + vOp + ' = ' + vIn + '[' + obfNum(1) + ']');
+  lines.push('  local ' + vIx + ' = ' + vIn + '[' + obfNum(2) + ']');
+  lines.push('  if ' + vOp + ' == ' + opLit + ' then');
+  lines.push('    ' + vK + '[' + vIx + ']()');
+  lines.push('  elseif ' + vOp + ' == ' + nopLit + ' then');
+  lines.push('    -- nop');
+  lines.push('  else');
+  lines.push('    break');
+  lines.push('  end');
+  lines.push('  ' + vPc + ' = ' + vPc + ' + ' + obfNum(1));
   lines.push('end');
   return lines.join('\n');
 }
@@ -932,27 +935,22 @@ function buildAntiDebug(code) {
 //  it hasn't been tampered with during execution
 // ══════════════════════════════════════════════════════
 function buildIntegrityCheck(code) {
-  // Compute a simple polynomial hash of the code string
-  var h = 0;
-  for (var i=0;i<code.length;i++) h = (Math.imul(h,31) + code.charCodeAt(i)) | 0;
-  h = Math.abs(h) % 999983; // prime modulus
-
-  var vH=rv(), vExpected=rv(), vStr=rv(), vI=rv(), vC=rv();
-  // Runtime: hash a sentinel string (part of code we can predict)
-  // Instead hash the anti-debug block prefix as a stable sentinel
+  // Hash must use IDENTICAL algorithm in JS and Lua
+  // Lua: sh = (sh * 31 + byte) % 999983  (floating point, no overflow)
+  // JS must do the same — no & 0x7fffffff which changes intermediate values
   var sentinel = '-- SOLI';
   var sh = 0;
-  for (var i=0;i<sentinel.length;i++) sh = (sh*31 + sentinel.charCodeAt(i)) & 0x7fffffff;
-  sh = Math.abs(sh) % 999983;
+  for (var i = 0; i < sentinel.length; i++)
+    sh = (sh * 31 + sentinel.charCodeAt(i)) % 999983;
 
-  var vSentinel=rv(), vSH=rv(), vGot=rv();
+  var vSentinel=rv(), vSH=rv(), vI=rv(), vExpected=rv();
   var lines=[
     'do',
     '  local '+vSentinel+' = '+encodeStr(sentinel),
     '  local '+vExpected+' = '+obfNum(sh),
     '  local '+vSH+' = 0',
     '  for '+vI+'=1,#'+vSentinel+' do',
-    '    '+vSH+' = ('+vSH+'*('+obfNum(31)+') + string.byte('+vSentinel+','+vI+')) % '+obfNum(999983),
+    '    '+vSH+' = ('+vSH+' * '+obfNum(31)+' + string.byte('+vSentinel+','+vI+')) % '+obfNum(999983),
     '  end',
     '  if '+vSH+' ~= '+vExpected+' then error('+encodeStr('SOLI: integrity fail')+',0) end',
     'end',
@@ -1143,8 +1141,7 @@ function buildVMLayer(code) {
   // 2. XOR rolling-key string encryption (nested multi-layer enc, layer 1)
   out = encodeStrings(out);
 
-  // 3. Dynamic string array encryption (layer 2 — hoist encoded strings to table)
-  out = buildStringArray(out);
+  // buildStringArray disabled — regex greedy, breaks junk code syntax
 
   // 4. Number obfuscation
   out = obfNums(out);
@@ -1167,11 +1164,7 @@ function buildVMLayer(code) {
   // 10. VM Layer 3 (triple virtualization)
   var vm3 = buildOneVM(vm2);
 
-  // 11. Environ protection (proxy metatable)
-  vm3 = buildEnvProtection(vm3);
-
-  // 12. Anti-dump (closure fragmentation)
-  vm3 = buildAntiDump(vm3);
+  // Note: Environ protection + Anti-dump removed (LOW priority, unsafe in executors)
 
   // Header junk
   var jA = rv(), jB = rv(), jC = rv();
@@ -1267,13 +1260,9 @@ async function doObf() {
     var block = buildVMLayer(code);
     setLayers(12); await new Promise(r=>setTimeout(r,120));
 
-    // 13: Code Integrity Verification (runtime hash sentinel)
-    block = buildIntegrityCheck(block);
-    setLayers(13); await new Promise(r=>setTimeout(r,80));
-
-    // 14: Advanced Anti-Debug (recursive, multi-check)
+    // 13: Advanced Anti-Debug (recursive, multi-check)
     block = buildAntiDebug(block);
-    var layers = 14;
+    var layers = 13;
 
     // 15/16: Anti-Tamper — pilihan user
     if (useAntiTamper) {
