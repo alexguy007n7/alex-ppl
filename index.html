@@ -384,14 +384,14 @@
           <label class="toggle">
             <input type="checkbox" id="useAntiTamper" onchange="if(this.checked)document.getElementById('useLuaAntiTamper').checked=false">
             <span class="toggle-track"></span>
-            Anti-Tamper (executor)
+            Anti-Tamper (Executor)
           </label>
         </div>
         <div class="opt-row">
           <label class="toggle">
             <input type="checkbox" id="useLuaAntiTamper" onchange="if(this.checked)document.getElementById('useAntiTamper').checked=false">
             <span class="toggle-track"></span>
-            Anti-Tamper (Lua biasa)
+            Anti-Tamper (Lua 5.1-5)
           </label>
         </div>
       </div>
@@ -1256,15 +1256,12 @@ async function doObf() {
   }
 
   try {
-    // 1–12: full pipeline (VM×3, XOR+Array enc, CFF+poly, junk+, envProtect, antiDump)
+    // Pipeline: VM×3 + XOR + CFF+Poly + Junk (executor-safe)
     var block = buildVMLayer(code);
-    setLayers(12); await new Promise(r=>setTimeout(r,120));
+    var layers = 9;
+    setLayers(layers); await new Promise(r=>setTimeout(r,120));
 
-    // 13: Advanced Anti-Debug (recursive, multi-check)
-    block = buildAntiDebug(block);
-    var layers = 13;
-
-    // 15/16: Anti-Tamper — pilihan user
+    // Anti-Tamper — pilihan user (pilih sesuai target)
     if (useAntiTamper) {
       block = buildAntiTamper(block);
       layers += 1;
