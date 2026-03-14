@@ -86,14 +86,17 @@
       <div class="options">
         <div class="opt-row">
           <label class="toggle">
-            <input type="checkbox" id="useAntiTamper" onchange="if(this.checked)document.getElementById('useLuaAntiTamper').checked=false">
+            <input type="checkbox" id="useAntiTamper" onchange="if(this.checked){document.getElementById('useLuaAntiTamper').checked=false;document.getElementById('warnExec').style.display='block';}else{document.getElementById('warnExec').style.display='none';}">
             <span class="toggle-track"></span>
             Anti-Tamper Executor
           </label>
+          <div id="warnExec" style="display:none;margin-top:4px;padding:6px 10px;background:#3b1f1f;border-left:3px solid #ef4444;border-radius:4px;font-size:11px;color:#fca5a5;line-height:1.5;">
+            ⚠️ <b>Hanya untuk executor tertentu:</b><br>✅ Synapse X &nbsp;✅ Electron<br>❌ Delta &nbsp;❌ Solara &nbsp;❌ Fluxus &nbsp;❌ Arceus X &nbsp;❌ Wave &nbsp;❌ Hydrogen &nbsp;❌ Celery<br><span style="color:#f87171">Bisa <b>crash / error</b> di executor yang tidak didukung.</span>
+          </div>
         </div>
         <div class="opt-row">
           <label class="toggle">
-            <input type="checkbox" id="useLuaAntiTamper" onchange="if(this.checked)document.getElementById('useAntiTamper').checked=false">
+            <input type="checkbox" id="useLuaAntiTamper" onchange="if(this.checked){document.getElementById('useAntiTamper').checked=false;document.getElementById('warnExec').style.display='none';}">
             <span class="toggle-track"></span>
             Anti-Tamper Lua 5.1
           </label>
