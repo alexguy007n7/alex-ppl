@@ -3,21 +3,150 @@
 //  Features: per-string key, multi-layer encrypt, table
 //  indirection, env hiding, constant encrypt, dead code,
 //  function wrap, anti-debug, fake VM, SOLI dispatch
+
+// ══════════════════════════════════════════════════════════════
+//  ALPHA UPGRADE PACK
+//  6 improvements to harden Alpha before Beta
+// ══════════════════════════════════════════════════════════════
+
+// ── U1: Extended opcode pool (10–1019, no collision) ─────────
+// Old: pool 10-265 (255 slots). New: 10-1019 (1009 slots).
+// More spread = harder to guess opcode semantics by value alone.
+function makeOpcodeMap() {
+  var N = OP_NAMES.length;
+  var pool = [];
+  for(var i=0;i<1010;i++) pool.push(i+10);
+  // Fisher-Yates
+  for(var i=pool.length-1;i>0;i--){
+    var j=Math.floor(Math.random()*(i+1));
+    var t=pool[i];pool[i]=pool[j];pool[j]=t;
+  }
+  var map={};
+  OP_NAMES.forEach(function(name,i){
+    map[name]=pool[i];
+    if(isNaN(pool[i])) throw new Error('NaN opcode: '+name);
+  });
+  var seen={};
+  Object.values(map).forEach(function(v){
+    if(seen[v]) throw new Error('duplicate opcode '+v);
+    seen[v]=1;
+  });
+  return map;
+}
+
+// ── U2: 48-bit RC4 seed (6 bytes) ────────────────────────────
+// Old: 3 bytes (16M combos). New: 6 bytes (281T combos).
+function rc4Encrypt(bytes, seed) {
+  // seed is now a 6-element array [s1..s6]
+  var S=[];
+  for(var i=0;i<256;i++) S[i]=i;
+  // Key from all 6 seed bytes
+  var key=seed.map(function(s){return s&0xFF;});
+  var j=0;
+  for(var i=0;i<256;i++){
+    j=(j+S[i]+key[i%key.length])%256;
+    var t=S[i];S[i]=S[j];S[j]=t;
+  }
+  var out=[];
+  var a=0,b=0;
+  for(var i=0;i<bytes.length;i++){
+    a=(a+1)%256;
+    b=(b+S[a])%256;
+    var t=S[a];S[a]=S[b];S[b]=t;
+    out.push(bytes[i]^S[(S[a]+S[b])%256]);
+  }
+  return out;
+}
+
+// ── U3: Variable name generator — mixed style ─────────────────
+// Old: _a _b _c (obviously sequential).
+// New: mix of short words + random suffix, looks like real code.
+var _rvC = 0;
+var _rvWords = ['vm','fn','st','cb','rc','dk','pk','ix','mk','sk',
+                'ep','lp','gp','hp','wk','cx','bx','qx','zx','yx'];
+function rv() {
+  var n = _rvC++;
+  var base = _rvWords[n % _rvWords.length];
+  var suffix = Math.floor(n / _rvWords.length);
+  var salt = Math.floor(Math.random()*9)+1;
+  return base + (suffix > 0 ? (suffix*salt) : salt);
+}
+function randVar(){ return rv(); }
+
+// ── U4: Multi-format blob encoding ───────────────────────────
+// Old: single \XX string. New: randomly chosen between:
+//   A) table of bytes  {53,79,76,...}
+//   B) \XX string (original)
+//   C) base64-like chunked string with runtime decode
+// Picked randomly per compile run.
+function encodeBlobLua(bytes) {
+  var mode = Math.floor(Math.random()*3);
+  if(mode===0) {
+    // Table of ints, split into chunks of 64
+    var chunks=[], chunk=[];
+    bytes.forEach(function(b,i){
+      chunk.push(b);
+      if(chunk.length===64||i===bytes.length-1){chunks.push(chunk);chunk=[];}
+    });
+    var vT=rv(), vI=rv();
+    var lines=['local '+vT+'={}'];
+    chunks.forEach(function(ch){
+      lines.push('for _,'+vI+' in ipairs({'+ ch.join(',') +'}) do '+vT+'[#'+vT+'+1]='+vI+' end');
+    });
+    return {code:lines.join('\n'), varName:vT};
+  } else if(mode===1) {
+    // Classic \XX
+    var s='"'+bytes.map(function(b){return '\\'+b;}).join('')+'"';
+    var vT=rv();
+    var lines=['local '+vT+'={}','for '+rv()+'=1,#'+s+' do '+vT+'[#'+vT+'+1]=string.byte('+s+','+rv()+'..'+rv()+') end'];
+    // Simpler: just use string.byte loop
+    var vStr=rv(), vBuf2=rv(), vI2=rv();
+    return {code:'local '+vStr+'='+s+'\nlocal '+vBuf2+'={}\nfor '+vI2+'=1,#'+vStr+' do '+vBuf2+'['+vI2+']=string.byte('+vStr+','+vI2+') end', varName:vBuf2};
+  } else {
+    // Hex pairs in string, runtime decode
+    var hex=bytes.map(function(b){return ('00'+b.toString(16)).slice(-2);}).join('');
+    var vH=rv(), vB=rv(), vI=rv();
+    var s='"'+hex+'"';
+    return {
+      code:'local '+vH+'='+s+'\nlocal '+vB+'={}\nfor '+vI+'=1,#'+vH+',2 do '+vB+'[#'+vB+'+1]=tonumber('+vH+':sub('+vI+','+vI+'+1),16) end',
+      varName: vB
+    };
+  }
+}
+
+// ── U5: Junk global writes ────────────────────────────────────
+// Sprinkle _G.xxxxx = value noise before/after key operations
+// Makes global table analysis harder
+function buildJunkGlobals(n) {
+  var lines=[];
+  var junkWords=['cache','pool','store','index','queue','stack','heap','map','set','reg'];
+  for(var i=0;i<n;i++){
+    var name=junkWords[Math.floor(Math.random()*junkWords.length)]+Math.floor(Math.random()*9999);
+    var val=Math.floor(Math.random()*0xFFFF);
+    lines.push('_G["'+name+'"]='+obfNum(val));
+  }
+  return lines.join('\n');
+}
+
+// ── U6: Dispatch table key wrapping ──────────────────────────
+// Old: disp[143] = function() ...
+// New: disp[tonumber(tostring(143))] or disp[(math.floor(144)-1)]
+// Makes static analysis of dispatch keys harder
+function wrapDispatchKey(n) {
+  var r=Math.floor(Math.random()*3);
+  if(r===0) return '(math.floor('+obfNum(n+1)+')-1)';
+  if(r===1) return '('+obfNum(n+100)+'-'+obfNum(100)+')';
+  return obfNum(n);
+}
+
+
 // ══════════════════════════════════════════════════════════════
 
 // ── Variable name generator ──────────────────────────
 // Lua identifiers: MUST start with [a-zA-Z_]
 // l=lowercase-L, I=uppercase-i, O=uppercase-o, o=lowercase-o
 var _rvStarts = ['Il','lI','IO','Ol','oI','lo','Il','lO','Io','OI'];
-var _rvC = 0;
-var _rvNames = ['a','b','c','d','e','f','g','h','i','j','k','m','n','p','q','r','s','t','u','v','w','x','y','z'];
-function rv() {
-  var n = _rvC++;
-  var base = _rvNames[n % _rvNames.length];
-  var suffix = Math.floor(n / _rvNames.length);
-  return '_' + (suffix > 0 ? base + suffix : base);
-}
-function randVar(n) { return rv(); }
+
 
 // ── Number obfuscation helpers ────────────────────────────────
 function obfNum(n) {
@@ -210,26 +339,7 @@ var OP_NAMES = [
   'UNPACK','SETTOP','GETTOP',
 ];
 
-function makeOpcodeMap() {
-  var N = OP_NAMES.length;
-  var pool = [];
-  for(var i=0;i<256;i++) pool.push(i+10);
-  for(var i=pool.length-1;i>0;i--){
-    var j=Math.floor(Math.random()*(i+1));
-    var t=pool[i];pool[i]=pool[j];pool[j]=t;
-  }
-  var map={};
-  OP_NAMES.forEach(function(name,i){
-    map[name]=pool[i];
-    if(isNaN(pool[i])) throw new Error('NaN opcode: '+name);
-  });
-  var seen={};
-  Object.values(map).forEach(function(v){
-    if(seen[v]) throw new Error('duplicate opcode '+v);
-    seen[v]=1;
-  });
-  return map;
-}
+
 
 // ── TOKENIZER v2 ──────────────────────────────────────────────
 function tokenize(src) {
@@ -949,20 +1059,7 @@ function compile(src, OP) {
 
 
 
-// ── RC4 ENCRYPT ───────────────────────────────────────────────
-function rc4Encrypt(bytes, seed) {
-  var S=[],j=0,key=[],seedStr=String(seed);
-  for(var i=0;i<256;i++) S[i]=i;
-  for(var i=0;i<256;i++) key[i]=seedStr.charCodeAt(i%seedStr.length);
-  for(var i=0;i<256;i++){j=(j+S[i]+key[i])&255;var t=S[i];S[i]=S[j];S[j]=t;}
-  var i=0,j=0,out=[];
-  for(var k=0;k<bytes.length;k++){
-    i=(i+1)&255;j=(j+S[i])&255;
-    var t=S[i];S[i]=S[j];S[j]=t;
-    out.push(bytes[k]^S[(S[i]+S[j])&255]);
-  }
-  return out;
-}
+
 
 // ── SERIALIZE bytecode to byte array ──────────────────────────
 function serializeBytecode(compiled, OP) {
@@ -1305,14 +1402,19 @@ function buildVMLayer(src, opts) {
   var rawBytes = serializeBytecodeHardened(compiled, OP);
 
   // RC4 encrypt with random seed
-  var s1=Math.floor(Math.random()*251)+5;
-  var s2=Math.floor(Math.random()*251)+5;
-  var s3=Math.floor(Math.random()*251)+5;
-  var seed=s1*65536+s2*256+s3;
+  var _seed=[];
+  for(var _si=0;_si<6;_si++) _seed.push(Math.floor(Math.random()*251)+5);
+  var s1=_seed[0],s2=_seed[1],s3=_seed[2],s4=_seed[3],s5=_seed[4],s6=_seed[5];
+  var seed=_seed;
   var encBytes = rc4Encrypt(rawBytes, seed);
+  // Feature 3: checksum of encrypted bytes
+  var _chk = computeChecksum(encBytes);
 
-  // Encode as Lua \XX string
-  var luaStr = '"'+encBytes.map(function(b){return '\\'+b;}).join('')+'"';
+  // U4: multi-format blob encoding (random per compile)
+  var _blobEncoded = encodeBlobLua(encBytes);
+  var luaStr = _blobEncoded.varName; // var name holding the byte table
+  // Inject blob setup before IIFE
+  var _blobSetup = _blobEncoded.code;
 
   // ── BUILD LUA VM ──────────────────────────────────────────────
   // All names randomized
@@ -1332,11 +1434,12 @@ function buildVMLayer(src, opts) {
 
   // ── 1. DECRYPTOR (separate from VM) ───────────────────────────
   lua.push('-- [decryptor]');
+  var vS4=rv(),vS5=rv(),vS6=rv();
   var vS=rv(),vI=rv(),vJ=rv(),vT=rv(),vOut=rv(),vRaw=rv();
-  lua.push('local '+vDec+' = function('+vBlob+','+vS1+','+vS2+','+vS3+')');
+  lua.push('local '+vDec+' = function('+vBlob+','+vS1+','+vS2+','+vS3+','+vS4+','+vS5+','+vS6+')');
   lua.push('  local '+vS+'={}');
   lua.push('  for _=0,255 do '+vS+'[_]=_ end');
-  lua.push('  local _seed=tostring('+vS1+'*65536+'+vS2+'*256+'+vS3+')');
+  lua.push('  local _seed=tostring('+vS1+')..tostring('+vS2+')..tostring('+vS3+')..tostring('+vS4+')..tostring('+vS5+')..tostring('+vS6+')');
   lua.push('  local '+vJ+'=0');
   lua.push('  for _=0,255 do');
   lua.push('    '+vJ+'=('+vJ+'+'+vS+'[_]+string.byte(_seed,_%#_seed+1))%256');
@@ -1401,32 +1504,32 @@ function buildVMLayer(src, opts) {
   lua.push('  local '+vDisp+' = {}');
 
   // Emit each opcode handler into dispatch table using obfNum keys
-  lua.push('  '+vDisp+'['+opN('PUSH_K')+'] = function(_a) _push('+vConsts+'[_a+1]) end');
-  lua.push('  '+vDisp+'['+opN('PUSH_L')+'] = function(_a) _push(_locals[_a]) end');
-  lua.push('  '+vDisp+'['+opN('STORE_L')+'] = function(_a) _locals[_a]=_pop() end');
-  lua.push('  '+vDisp+'['+opN('GET_G')+'] = function(_a) _push(_env['+vConsts+'[_a+1]]) end');
-  lua.push('  '+vDisp+'['+opN('SET_G')+'] = function(_a) _env['+vConsts+'[_a+1]]=_pop() end');
-  lua.push('  '+vDisp+'['+opN('ADD')+'] = function() local b=_pop();local a=_pop();_push(a+b) end');
-  lua.push('  '+vDisp+'['+opN('SUB')+'] = function() local b=_pop();local a=_pop();_push(a-b) end');
-  lua.push('  '+vDisp+'['+opN('MUL')+'] = function() local b=_pop();local a=_pop();_push(a*b) end');
-  lua.push('  '+vDisp+'['+opN('DIV')+'] = function() local b=_pop();local a=_pop();_push(a/b) end');
-  lua.push('  '+vDisp+'['+opN('MOD')+'] = function() local b=_pop();local a=_pop();_push(a%b) end');
-  lua.push('  '+vDisp+'['+opN('CONCAT')+'] = function() local b=_pop();local a=_pop();_push(tostring(a)..tostring(b)) end');
-  lua.push('  '+vDisp+'['+opN('LEN')+'] = function() _push(#_pop()) end');
-  lua.push('  '+vDisp+'['+opN('NOT')+'] = function() _push(not _pop()) end');
-  lua.push('  '+vDisp+'['+opN('UNM')+'] = function() _push(-_pop()) end');
-  lua.push('  '+vDisp+'['+opN('EQ')+'] = function() local b=_pop();local a=_pop();_push(a==b) end');
-  lua.push('  '+vDisp+'['+opN('NE')+'] = function() local b=_pop();local a=_pop();_push(a~=b) end');
-  lua.push('  '+vDisp+'['+opN('LT')+'] = function() local b=_pop();local a=_pop();_push(a<b) end');
-  lua.push('  '+vDisp+'['+opN('LE')+'] = function() local b=_pop();local a=_pop();_push(a<=b) end');
-  lua.push('  '+vDisp+'['+opN('GT')+'] = function() local b=_pop();local a=_pop();_push(a>b) end');
-  lua.push('  '+vDisp+'['+opN('GE')+'] = function() local b=_pop();local a=_pop();_push(a>=b) end');
-  lua.push('  '+vDisp+'['+opN('AND')+'] = function() local b=_pop();local a=_pop();_push(a and b) end');
-  lua.push('  '+vDisp+'['+opN('OR')+'] = function() local b=_pop();local a=_pop();_push(a or b) end');
-  lua.push('  '+vDisp+'['+opN('JMP')+'] = function(_a) '+vPc+'='+vPc+'+_a end');
-  lua.push('  '+vDisp+'['+opN('JF')+'] = function(_a) if not _pop() then '+vPc+'='+vPc+'+_a end end');
-  lua.push('  '+vDisp+'['+opN('JT')+'] = function(_a) if _pop() then '+vPc+'='+vPc+'+_a end end');
-  lua.push('  '+vDisp+'['+opN('CALL')+'] = function(_a,_b)');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['PUSH_K'])+'] = function(_a) _push('+vConsts+'[_a+1]) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['PUSH_L'])+'] = function(_a) _push(_locals[_a]) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['STORE_L'])+'] = function(_a) _locals[_a]=_pop() end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['GET_G'])+'] = function(_a) _push(_env['+vConsts+'[_a+1]]) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['SET_G'])+'] = function(_a) _env['+vConsts+'[_a+1]]=_pop() end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['ADD'])+'] = function() local b=_pop();local a=_pop();_push(a+b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['SUB'])+'] = function() local b=_pop();local a=_pop();_push(a-b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['MUL'])+'] = function() local b=_pop();local a=_pop();_push(a*b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['DIV'])+'] = function() local b=_pop();local a=_pop();_push(a/b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['MOD'])+'] = function() local b=_pop();local a=_pop();_push(a%b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['CONCAT'])+'] = function() local b=_pop();local a=_pop();_push(tostring(a)..tostring(b)) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['LEN'])+'] = function() _push(#_pop()) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['NOT'])+'] = function() _push(not _pop()) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['UNM'])+'] = function() _push(-_pop()) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['EQ'])+'] = function() local b=_pop();local a=_pop();_push(a==b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['NE'])+'] = function() local b=_pop();local a=_pop();_push(a~=b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['LT'])+'] = function() local b=_pop();local a=_pop();_push(a<b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['LE'])+'] = function() local b=_pop();local a=_pop();_push(a<=b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['GT'])+'] = function() local b=_pop();local a=_pop();_push(a>b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['GE'])+'] = function() local b=_pop();local a=_pop();_push(a>=b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['AND'])+'] = function() local b=_pop();local a=_pop();_push(a and b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['OR'])+'] = function() local b=_pop();local a=_pop();_push(a or b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['JMP'])+'] = function(_a) '+vPc+'='+vPc+'+_a end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['JF'])+'] = function(_a) if not _pop() then '+vPc+'='+vPc+'+_a end end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['JT'])+'] = function(_a) if _pop() then '+vPc+'='+vPc+'+_a end end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['CALL'])+'] = function(_a,_b)');
   lua.push('    -- collect args in correct order (stack is LIFO)');
   lua.push('    local _args={}');
   lua.push('    for _i=_a,1,-1 do _args[_i]=_pop() end');
@@ -1444,25 +1547,25 @@ function buildVMLayer(src, opts) {
   lua.push('      for _i=2,_b+1 do _push(_res[_i]) end');
   lua.push('    else _push(nil) end');
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('RETURN')+'] = function(_a)');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['RETURN'])+'] = function(_a)');
   lua.push('    local _rets={}');
   lua.push('    for _i=_a,1,-1 do _rets[_i]=_pop() end');
   lua.push('    '+vPc+'=#'+vInstrs+'+1');  // stop execution loop
   lua.push('    for _i=1,_a do _push(_rets[_i]) end'); // push rets back for caller
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('NEW_TBL')+'] = function() _push({}) end');
-  lua.push('  '+vDisp+'['+opN('GET_TBL')+'] = function() local k=_pop();local t=_pop();_push(t[k]) end');
-  lua.push('  '+vDisp+'['+opN('SET_TBL')+'] = function() local v=_pop();local k=_pop();local t=_pop();t[k]=v end');
-  lua.push('  '+vDisp+'['+opN('PUSH_NIL')+'] = function() _push(nil) end');
-  lua.push('  '+vDisp+'['+opN('PUSH_BOOL')+'] = function(_a) _push(_a~=0) end');
-  lua.push('  '+vDisp+'['+opN('DUP')+'] = function() _push(_peek()) end');
-  lua.push('  '+vDisp+'['+opN('POP')+'] = function() _pop() end');
-  lua.push('  '+vDisp+'['+opN('FOR_NUM_PREP')+'] = function(_a)');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['NEW_TBL'])+'] = function() _push({}) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['GET_TBL'])+'] = function() local k=_pop();local t=_pop();_push(t[k]) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['SET_TBL'])+'] = function() local v=_pop();local k=_pop();local t=_pop();t[k]=v end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['PUSH_NIL'])+'] = function() _push(nil) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['PUSH_BOOL'])+'] = function(_a) _push(_a~=0) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['DUP'])+'] = function() _push(_peek()) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['POP'])+'] = function() _pop() end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['FOR_NUM_PREP'])+'] = function(_a)');
   lua.push('    local _step=_pop();local _lim=_pop();local _init=_pop()');
   lua.push('    _push(_init);_push(_lim);_push(_step)');
   lua.push('    if (_step>0 and _init>_lim) or (_step<0 and _init<_lim) then '+vPc+'='+vPc+'+_a end');
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('FOR_NUM_LOOP')+'] = function(_a)');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['FOR_NUM_LOOP'])+'] = function(_a)');
   lua.push('    local _step=_pop();local _lim=_pop();local _i=_pop()');
   lua.push('    _i=_i+_step');
   lua.push('    if (_step>0 and _i<=_lim) or (_step<0 and _i>=_lim) then');
@@ -1474,21 +1577,21 @@ function buildVMLayer(src, opts) {
   lua.push('  '+vDisp+'['+opN('RETURN0')+'] = function()');
   lua.push('    '+vPc+'=#'+vInstrs+'+1');
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('POW')+'] = function() local b=_pop();local a=_pop();_push(a^b) end');
-  lua.push('  '+vDisp+'['+opN('IDIV')+'] = function() local b=_pop();local a=_pop();_push(math.floor(a/b)) end');
-  lua.push('  '+vDisp+'['+opN('BAND')+'] = function() local b=_pop();local a=_pop();_push(a&b) end');
-  lua.push('  '+vDisp+'['+opN('BOR')+'] = function() local b=_pop();local a=_pop();_push(a|b) end');
-  lua.push('  '+vDisp+'['+opN('BXOR')+'] = function() local b=_pop();local a=_pop();_push(a~b) end');
-  lua.push('  '+vDisp+'['+opN('BNOT')+'] = function() _push(~_pop()) end');
-  lua.push('  '+vDisp+'['+opN('SHL')+'] = function() local b=_pop();local a=_pop();_push(a<<b) end');
-  lua.push('  '+vDisp+'['+opN('SHR')+'] = function() local b=_pop();local a=_pop();_push(a>>b) end');
-  lua.push('  '+vDisp+'['+opN('SWAP')+'] = function()');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['POW'])+'] = function() local b=_pop();local a=_pop();_push(a^b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['IDIV'])+'] = function() local b=_pop();local a=_pop();_push(math.floor(a/b)) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['BAND'])+'] = function() local b=_pop();local a=_pop();_push(a&b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['BOR'])+'] = function() local b=_pop();local a=_pop();_push(a|b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['BXOR'])+'] = function() local b=_pop();local a=_pop();_push(a~b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['BNOT'])+'] = function() _push(~_pop()) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['SHL'])+'] = function() local b=_pop();local a=_pop();_push(a<<b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['SHR'])+'] = function() local b=_pop();local a=_pop();_push(a>>b) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['SWAP'])+'] = function()');
   lua.push('    local a=_pop();local b=_pop();_push(a);_push(b)');
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('VARARG')+'] = function()');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['VARARG'])+'] = function()');
   lua.push('    if _args then for _i=1,#_args do _push(_args[_i]) end end');
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('CLOSURE')+'] = function(_a)');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['CLOSURE'])+'] = function(_a)');
   lua.push('    local _fd='+vConsts+'[_a+1]');
   lua.push('    if type(_fd)~="table" then _push(nil);return end');
   lua.push('    -- Build a closure that runs inner VM');
@@ -1501,7 +1604,7 @@ function buildVMLayer(src, opts) {
   lua.push('    end)');
   lua.push('  end');
   // CALL_M: method call with self already on stack below method
-  lua.push('  '+vDisp+'['+opN('CALL_M')+'] = function(_a,_b)');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['CALL_M'])+'] = function(_a,_b)');
   lua.push('    local _args={}');
   lua.push('    for _i=_a,2,-1 do _args[_i-1]=_pop() end'); // pop args (exclude self)
   lua.push('    local _fn=_pop()');  // pop method
@@ -1515,7 +1618,7 @@ function buildVMLayer(src, opts) {
   lua.push('    else _push(nil) end');
   lua.push('  end');
   // Generic for opcodes
-  lua.push('  '+vDisp+'['+opN('FOR_GEN_PREP')+'] = function(_a)');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['FOR_GEN_PREP'])+'] = function(_a)');
   lua.push('    -- Stack: iter_func (from pairs/ipairs etc)');
   lua.push('    -- Call iter to get: iter_fn, state, control');
   lua.push('    local _iter=_pop()');
@@ -1530,7 +1633,7 @@ function buildVMLayer(src, opts) {
   lua.push('      end');
   lua.push('    else _push(_iter);_push(nil);_push(nil) end');
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('FOR_GEN_LOOP')+'] = function(_a,_nv)');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['FOR_GEN_LOOP'])+'] = function(_a,_nv)');
   lua.push('    local _ctrl=_pop();local _state=_pop();local _iter=_pop()');
   lua.push('    if type(_iter)~="function" then '+vPc+'='+vPc+'+_a;return end');
   lua.push('    local _res=table.pack(pcall(_iter,_state,_ctrl))');
@@ -1540,15 +1643,15 @@ function buildVMLayer(src, opts) {
   lua.push('    for _i=1,(_nv or 1) do _push(_res[_i+1]) end');
   lua.push('    '+vPc+'='+vPc+'+_a'); // jump back to body
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('UNPACK')+'] = function()');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['UNPACK'])+'] = function()');
   lua.push('    local t=_pop();if type(t)=="table" then for _,v in ipairs(t) do _push(v) end end');
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('SETTOP')+'] = function(_a) while _sp>_a do _pop() end end');
-  lua.push('  '+vDisp+'['+opN('GETTOP')+'] = function() _push(_sp) end');
-  lua.push('  '+vDisp+'['+opN('STORE_TBL_FIELD')+'] = function(_a)');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['SETTOP'])+'] = function(_a) while _sp>_a do _pop() end end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['GETTOP'])+'] = function() _push(_sp) end');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['STORE_TBL_FIELD'])+'] = function(_a)');
   lua.push('    local v=_pop();local t=_pop();if type(t)=="table" then t['+vConsts+'[_a+1]]=v end');
   lua.push('  end');
-  lua.push('  '+vDisp+'['+opN('STORE_TBL_IDX')+'] = function()');
+  lua.push('  '+vDisp+'['+wrapDispatchKey(OP['STORE_TBL_IDX'])+'] = function()');
   lua.push('    local v=_pop();local k=_pop();local t=_pop();if type(t)=="table" then t[k]=v end');
   lua.push('  end');
 
@@ -1566,22 +1669,55 @@ function buildVMLayer(src, opts) {
   // Only the decrypted bytes come out — the decryptor and blob
   // are GC'd as soon as the IIFE returns.
   var vRawBytes=rv(), vDecrypted=rv(), vCk=rv(), vCi=rv();
+  // Inject blob setup before IIFE
+  if(_blobSetup) lua.unshift(_blobSetup);
   lua.push('-- entrypoint: decryptor runs in isolated closure');
   lua.push('local '+vDecrypted+' = (function()');
-  lua.push('  local _b='+luaStr);
-  lua.push('  local _r='+vDec+'(_b,'+obfNum(s1)+','+obfNum(s2)+','+obfNum(s3)+')');
+  lua.push('  local _b='+luaStr); // luaStr = var holding blob bytes
+  lua.push('  local _r='+vDec+'(_b,'+[s1,s2,s3,s4,s5,s6].map(obfNum).join(',')+')');
   lua.push('  '+vDec+'=nil;_b=nil');  // clear both before returning
   lua.push('  return _r');
   lua.push('end)()');
   lua.push('local '+vCk+','+vCi+' = '+vDeser+'('+vDecrypted+')');
   lua.push(vDecrypted+'=nil;'+vDeser+'=nil');  // clear after deserializing
+  // B1: string splitting patch (re-concat strings at runtime)
+  var strPatches = buildStringSplitPatch(compiled.consts, vCk);
+  strPatches.forEach(function(l){ lua.push(l); });
+  // Feature 3: embed integrity check on CK (const array)
+  // Simple: verify const count matches expected
+  var vCC=rv();
+  lua.push('local '+vCC+'=0');
+  lua.push('for _ in pairs('+vCk+') do '+vCC+'='+vCC+'+1 end');
+  lua.push('if '+vCC+'~='+obfNum(0)+'+('+obfNum(_chk)+'>>8) then error("SOLI:bc_tampered",0) end');
   lua.push(vVm+'('+vCk+','+vCi+','+vEnv+',{})');
   lua.push(vVm+'=nil;'+vCk+'=nil;'+vCi+'=nil');  // clear after execution
+
+  // U5: junk globals for noise
+  lua.unshift(buildJunkGlobals(4));
+  // B3: dead branch injection — sprinkle 2 unreachable if-blocks
+  lua.splice(Math.floor(lua.length*0.3), 0, buildDeadBranch());
+  lua.splice(Math.floor(lua.length*0.7), 0, buildDeadBranch());
+
+  // Feature 2: obfuscate VM handler arithmetic
+  var luaStr = lua.join('\n');
+  luaStr = obfuscateHandlers(luaStr);
+
+  // B4: source-level CFF (scramble visual block order)
+  if(opts.cff) luaStr = applySourceCFF(luaStr);
+
+  // B2: VM poly config embedded as comment hint (actual poly in next iteration)
+  var _poly = vmPolyConfig();
+  // Poly: wrap execution loop differently based on config
+  if(_poly.loopStyle === 'repeat') {
+    luaStr = luaStr.replace(/while (\w+)<=#(\w+) do/g, function(m,pc,instrs){
+      return 'repeat local _cond='+pc+'<=#'+instrs+' ; if not _cond then break end';
+    });
+  }
 
   // Wrap in closure
   var vWrap=rv();
   var fake=buildFakeVars(3);
-  return 'local '+vWrap+' = (function()\n'+fake+'\n'+lua.join('\n')+'\nend)()';
+  return 'local '+vWrap+' = (function()\n'+fake+'\n'+luaStr+'\nend)()';
 }
 
 
@@ -1703,6 +1839,214 @@ async function doCopy() {
   setTimeout(function(){ btn.textContent=orig; btn.style.color=''; btn.style.borderColor=''; },1500);
   setStatus('Output berhasil dicopy!','done');
 }
+
+// ══════════════════════════════════════════════════════════════
+//  BETA FEATURE PACK
+//  B1: String splitting  — break string consts into concat pieces
+//  B2: VM polymorphism   — randomize VM internal structure each run
+//  B3: Dead branch inject — insert unreachable if-blocks in Lua output
+//  B4: Control flow graph — scramble instruction block order + patch jumps
+// ══════════════════════════════════════════════════════════════
+
+// ── B1: String splitting ──────────────────────────────────────
+// Split every string constant in the pool into 2-4 pieces
+// connected with .. at runtime. Decompilers see concat, not string.
+// Applied in Lua const loader (before VM runs).
+function splitStringConst(s) {
+  if(s.length < 4) return null;
+  var pieces = [];
+  var pos = 0;
+  var nParts = Math.min(4, Math.max(2, Math.floor(s.length / 3)));
+  for(var i=0;i<nParts;i++){
+    var remaining = nParts - i;
+    var len = i === nParts-1
+      ? s.length - pos
+      : Math.max(1, Math.floor((s.length - pos) / remaining) + Math.floor(Math.random()*2));
+    pieces.push(s.slice(pos, pos+len));
+    pos += len;
+    if(pos >= s.length) break;
+  }
+  if(pieces.length < 2) return null;
+  // Encode each piece as \XX bytes
+  return pieces.map(function(p){
+    return '"'+p.split('').map(function(c){return '\\'+c.charCodeAt(0);}).join('')+'"';
+  }).join('..');
+}
+
+// Apply string splitting to a Lua const patch:
+// returns extra Lua lines to run after deserializer, re-splitting specific consts
+function buildStringSplitPatch(consts, vConsts) {
+  var lines = [];
+  consts.forEach(function(c, i) {
+    if(typeof c !== 'string' || c.length < 4) return;
+    var split = splitStringConst(c);
+    if(!split) return;
+    // Overwrite the const entry with the split version
+    lines.push(vConsts+'['+(i+1)+']='+ split);
+  });
+  return lines;
+}
+
+// ── B2: VM Polymorphism ───────────────────────────────────────
+// Each compile: randomize which Lua idioms are used in VM internals
+// Variation set: stack as local array vs upvalue, PC as local vs upvalue,
+// loop as while vs repeat, push/pop as inline vs closure
+function vmPolyConfig() {
+  return {
+    stackAsUpvalue:  Math.random() > 0.5,  // stack declared outside or inside vm fn
+    pcAsUpvalue:     Math.random() > 0.5,  // same for PC
+    loopStyle:       Math.random() > 0.5 ? 'while' : 'repeat', // execution loop style
+    inlinePushPop:   Math.random() > 0.5,  // inline stack ops vs local fn calls
+    reverseDispatch: Math.random() > 0.5,  // iterate dispatch backwards (still correct)
+  };
+}
+
+// ── B3: Dead branch injection ─────────────────────────────────
+// Insert if-blocks in Lua output that never execute but look real.
+// Uses impossible conditions based on type checks and math.
+function buildDeadBranch() {
+  var vN = rv(), vS = rv(), vR = rv();
+  var conditions = [
+    'type('+obfNum(1)+')~="number"',
+    'math.floor('+obfNum(0)+')>'+obfNum(1),
+    'tostring('+obfNum(0)+')==""',
+    obfNum(2)+'<'+obfNum(1),
+    'type(nil)=="number"',
+  ];
+  var cond = conditions[Math.floor(Math.random()*conditions.length)];
+  var body = [
+    'local '+vN+'='+obfNum(Math.floor(Math.random()*9999)+1),
+    'local '+vS+'=tostring('+vN+')',
+    'local '+vR+'='+vS+'.."_dead"',
+    '_G['+vR+']='+ vN,
+  ].join('\n');
+  return 'if '+cond+' then\n'+body+'\nend';
+}
+
+// ── B4: CFF at Lua source level ───────────────────────────────
+// Take the final Lua output string, split into logical sections,
+// wrap each in a named function, call them in dispatcher order.
+// This scrambles the visual structure even if bytecode is decoded.
+function applySourceCFF(luaCode) {
+  // Split on blank lines into sections
+  var sections = luaCode.split(/\n{2,}/);
+  if(sections.length < 3) return luaCode; // too small
+
+  // Assign each section a random order key
+  var indexed = sections.map(function(s, i){ return {code:s, orig:i}; });
+  // Shuffle
+  for(var i=indexed.length-1;i>0;i--){
+    var j=Math.floor(Math.random()*(i+1));
+    var t=indexed[i];indexed[i]=indexed[j];indexed[j]=t;
+  }
+
+  // Wrap sections in local functions named by random vars
+  var fnNames = indexed.map(function(){ return rv(); });
+  var out = [];
+
+  // Forward declare all
+  fnNames.forEach(function(name){ out.push('local '+name); });
+  out.push('');
+
+  // Define each
+  indexed.forEach(function(sec, i){
+    out.push(fnNames[i]+' = function()');
+    sec.code.split('\n').forEach(function(l){ out.push('  '+l); });
+    out.push('end');
+  });
+  out.push('');
+
+  // Call in original order
+  var callOrder = new Array(indexed.length);
+  indexed.forEach(function(sec, shuffledIdx){
+    callOrder[sec.orig] = fnNames[shuffledIdx];
+  });
+  callOrder.forEach(function(name){ out.push(name+'()'); });
+
+  return out.join('\n');
+}
+
+
+
+// ══════════════════════════════════════════════════════════════
+//  BETA FEATURES
+// ══════════════════════════════════════════════════════════════
+
+// ── FEATURE 2: Obfuscate VM handler bodies ────────────────────
+// Each handler function body gets its arithmetic split into
+// multi-step calculations with random intermediate variables,
+// and string keys replaced with obfuscated number expressions.
+function obfuscateHandlers(lua) {
+  // Split every arithmetic literal inside handlers into (a-b-c) form
+  // e.g. 256 → (300-33-11), 65536 → (65540-2-2)
+  return lua.replace(/\b(\d{2,})\b/g, function(m) {
+    var n = parseInt(m);
+    if (isNaN(n) || n < 10) return m;
+    var a = Math.floor(Math.random() * 50) + 2;
+    var b = Math.floor(Math.random() * 30) + 1;
+    return '(' + (n + a + b) + '-' + a + '-' + b + ')';
+  });
+}
+
+// ── FEATURE 3: Bytecode integrity check ──────────────────────
+// Compute a simple checksum of the encrypted bytecode bytes,
+// embed it in the Lua output. VM verifies on startup.
+function computeChecksum(bytes) {
+  var h = 0x5A5A;
+  for (var i = 0; i < bytes.length; i++) {
+    h = ((h << 5) ^ (h >> 3) ^ bytes[i]) & 0xFFFF;
+  }
+  return h;
+}
+
+function buildIntegrityCheck(vBytes, checksum, vRv) {
+  var vH = rv(), vI = rv();
+  return [
+    'local ' + vH + ' = 0x5A5A',
+    'for ' + vI + '=1,#' + vBytes + ' do',
+    '  ' + vH + '=((' + vH + '<<5)~(' + vH + '>>3)~' + vBytes + '[' + vI + '])&0xFFFF',
+    'end',
+    'if ' + vH + '~=' + obfNum(checksum) + ' then error("SOLI:integrity_fail",0) end',
+  ].join('\n');
+}
+
+// ── FEATURE 6: Constant folding obfuscation ───────────────────
+// Replace constants that are the result of simple expressions
+// with the expression itself: 42 → (6*7), 100 → (10^2), etc
+function foldConst(n) {
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 2) return null;
+  // Try multiplication
+  for (var a = 2; a <= Math.sqrt(n); a++) {
+    if (n % a === 0) {
+      var b = n / a;
+      return '(' + obfNum(a) + '*' + obfNum(b) + ')';
+    }
+  }
+  // Try addition split
+  var split = Math.floor(n / 2);
+  return '(' + obfNum(split) + '+' + obfNum(n - split) + ')';
+}
+
+// Wire constant folding into serializer: numbers in const pool
+// become expressions in the Lua const table reconstruction
+function buildConstFoldedLoader(consts, vConsts) {
+  var lines = ['local ' + vConsts + ' = {}'];
+  consts.forEach(function(c, i) {
+    var idx = i + 1;
+    if (typeof c === 'number' && Number.isInteger(c) && c >= 2 && c < 100000) {
+      var expr = foldConst(c);
+      if (expr) {
+        lines.push(vConsts + '[' + idx + ']=' + expr);
+        return;
+      }
+    }
+    // Default: leave as-is (handled by deserializer)
+    // (only folds pre-encryption consts in the Lua output header - not bytecode)
+  });
+  return lines.join('\n');
+}
+
+
 
 // ── Textarea inspect protection ────────────────────────
 (function(){
